@@ -1,11 +1,24 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { deriveWindow, deriveAll, deriveStatus, resetText, tightest } from "../derive.js";
+import { deriveWindow, deriveAll, deriveStatus, resetText, tightest, limitsMatchAccount } from "../derive.js";
 
 const fixture = JSON.parse(
   new TextDecoder().decode(readFileSync(new URL("./fixtures/limits.json", import.meta.url))),
 );
+
+test("limitsMatchAccount：subject 归属判定（切号后过滤旧账号用量）", () => {
+  // subject 与当前 userId 一致 → 属于当前账号
+  assert.equal(limitsMatchAccount({ subject: "usr_a", windows: [] }, "usr_a"), true);
+  // subject 属于别的账号（切号过渡期 relay 还没追上）→ 不匹配
+  assert.equal(limitsMatchAccount({ subject: "usr_a", windows: [] }, "usr_b"), false);
+  // 未登录 / 拿不到当前 userId → 不阻拦
+  assert.equal(limitsMatchAccount({ subject: "usr_a" }, null), true);
+  assert.equal(limitsMatchAccount({ subject: "usr_a" }, undefined), true);
+  // 响应无 subject（老 relay）→ 向后兼容，不阻拦
+  assert.equal(limitsMatchAccount({ windows: [] }, "usr_a"), true);
+  assert.equal(limitsMatchAccount(null, "usr_a"), true);
+});
 
 test("用户截图数值复现：5h 卡（匀速线 23%，落后 20%）", () => {
   // 截图：已用 3%，"3 小时后重置"（实际 3h51m 余量 → 已过 1h09m）

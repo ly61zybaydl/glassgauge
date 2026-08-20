@@ -1,6 +1,6 @@
 // 渲染与数据环。派生计算全部来自 derive.js；本文件只做取数节奏和 DOM。
 import { accountItems, currentLabel, esc, planBadge, planExpiry } from "./accounts-view.js";
-import { deriveAll } from "./derive.js";
+import { deriveAll, limitsMatchAccount } from "./derive.js";
 import { initGlass, recropTo, reloadWallpaper, teardownGlass } from "./glass.js";
 import { applyWallpaperTheme } from "./theme.js";
 
@@ -14,6 +14,7 @@ let timer = null;
 let backoffMs = 0; // 0 = 正常节奏；失败后 5s→30s
 let lastConnected = true;
 let expanded = false; // 悬停展开态（spec 形态 C）
+let fastUntil = 0; // 切号后允许快轮询到此时刻（等 relay 的 /v1/limits 追上新账号）
 
 // 玻璃设置（⚙ 弹出行）：白纱 alpha 即时生效（CSS 变量），磨砂 blur 防抖后
 // 经 set_glass 持久化并热更引擎/壁纸滤镜
@@ -75,28 +76,47 @@ async function tick() {
   }
   if (ok) {
     backoffMs = 0;
-    timer = setTimeout(tick, (config?.refreshSeconds ?? 60) * 1000);
+    // 切号后 relay 的 limits 还属于旧账号 → 快轮询（3s）直到 subject 追上或超时；
+    // 否则正常 refreshSeconds 节奏
+    if (limitsSyncing() && Date.now() < fastUntil) {
+      timer = setTimeout(tick, 3000);
+    } else {
+      timer = setTimeout(tick, (config?.refreshSeconds ?? 60) * 1000);
+    }
   } else {
     backoffMs = backoffMs ? Math.min(backoffMs * 2, 30000) : 5000;
     timer = setTimeout(tick, backoffMs);
   }
 }
 
+/* 只认属于当前账号的用量：切号后 relay 的 /v1/limits 会有个把秒仍报旧账号，
+   subject≠当前 userId 期间把旧数据视作"暂无"，避免显示上一个账号的用量。 */
+function currentLimits() {
+  if (!lastGood) return null;
+  return limitsMatchAccount(lastGood.json, accounts?.current?.userId) ? lastGood.json : null;
+}
+// 有数据但 subject 属于别的账号 = 正在等 relay 追上新账号
+function limitsSyncing() {
+  return !!lastGood && !limitsMatchAccount(lastGood.json, accounts?.current?.userId);
+}
+
 /* ---------- 渲染 ---------- */
 function render(connected) {
   const app = document.getElementById("app");
+  const limits = currentLimits();
+  const syncing = limitsSyncing();
   if (expanded) {
-    // 无数据也渲染展开壳（空态卡位 + 账号管理可用）
-    const all = lastGood ? deriveAll(lastGood.json, Date.now() / 1000) : null;
-    app.innerHTML = expandedHtml(all, connected);
+    // 无（当前账号的）数据也渲染展开壳（空态卡位 + 账号管理可用）
+    const all = limits ? deriveAll(limits, Date.now() / 1000) : null;
+    app.innerHTML = expandedHtml(all, connected, syncing);
     markDragRegion();
     fitExpanded();
     return;
   }
-  if (!lastGood) {
+  if (!limits) {
     app.innerHTML = shellHtml({
       dot: "grey",
-      who: connected ? "加载中…" : "未找到 mirasim",
+      who: !connected ? "未找到 mirasim" : syncing ? "同步新账号用量…" : "加载中…",
       pct: "–",
       fill: 0,
       tickAt: 0,
@@ -105,7 +125,7 @@ function render(connected) {
     markDragRegion();
     return;
   }
-  const all = deriveAll(lastGood.json, Date.now() / 1000);
+  const all = deriveAll(limits, Date.now() / 1000);
   const t = all.tight;
   const abnormal = all.status.kind !== "ok";
   app.innerHTML = shellHtml({
@@ -124,9 +144,14 @@ function render(connected) {
 }
 
 /* ---------- 展开态（spec 形态 C：304 宽，三窗口卡 + 账号行） ---------- */
-function expandedHtml(all, connected) {
+function expandedHtml(all, connected, syncing) {
   const dot = connected ? (all?.status.dot ?? "grey") : "grey";
   const dotCls = dot === "accent" ? "dot" : `dot ${dot}`;
+  const emptyMsg = !connected
+    ? "未找到 mirasim · 数据不可用"
+    : syncing
+      ? "正在同步新账号用量…"
+      : "加载中…";
   const cards = all
     ? all.windows
         .map(
@@ -145,7 +170,7 @@ function expandedHtml(all, connected) {
       </div>`,
         )
         .join("")
-    : `<div class="card empty">${connected ? "加载中…" : "未找到 mirasim · 数据不可用"}</div>`;
+    : `<div class="card empty">${emptyMsg}</div>`;
   return `
     <div class="shell expanded${connected ? "" : " stale"}">
       <div class="head">
@@ -277,10 +302,11 @@ async function doSwitch(name) {
   render(lastConnected);
   try {
     accounts = await invoke("accounts_switch", { name });
-    setNote(`已切换 →「${name}」· 等待 mirasim 生效…`, "ok");
-    // mirasim 服务端会热重载 setting.json；错峰多拉几次让额度卡跟上新账号
-    setTimeout(tick, 3000);
-    setTimeout(tick, 9000);
+    setNote(`已切换 →「${name}」· 同步用量中…`, "ok");
+    // mirasim 服务端热重载 setting.json 后，/v1/limits 的 subject 才会换到新账号；
+    // 开一个快轮询窗口（最多 150s），tick 里按 subject 是否追上决定快/慢节奏
+    fastUntil = Date.now() + 150000;
+    tick();
   } catch (e) {
     setNote(String(e), "err");
   }

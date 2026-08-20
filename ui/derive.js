@@ -61,6 +61,16 @@ export function resetText(sec) {
   return `${m} 分后重置`;
 }
 
+/** 用量是否属于该账号：`/v1/limits` 的 subject 应等于当前登录 userId。
+ *  无 userId（未登录/未取到）或响应无 subject 时不阻拦（视作匹配，向后兼容）。
+ *  切号后 relay 有个把秒仍在报旧账号，此时 subject≠userId → 返回 false，
+ *  上层据此把旧账号用量视作"暂无"，不显示上一个账号的数字。 */
+export function limitsMatchAccount(limits, userId) {
+  const subject = limits?.subject;
+  if (!userId || !subject) return true;
+  return subject === userId;
+}
+
 function round1(x) {
   return Math.round(x * 10) / 10;
 }

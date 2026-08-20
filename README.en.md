@@ -69,6 +69,13 @@ layout (`~/.mirasim/_account_switcher/{profiles,backups}`) and can be used inter
   "plan expiry" come from the same JWT's `plan` / `plan_exp` claims, so they refresh the
   moment you switch accounts. They fall back to `planLabel` / `validUntil` in the config
   only when the token can't be decrypted (so those two config keys are just defaults now).
+- **Usage is attributed to the right account** (v0.6.0): the `/v1/limits` response carries a
+  `subject` (= the account's userId). After a switch the relay takes a few seconds to tens of
+  seconds to move its limits to the new account, and during that window `subject` still points
+  at the old account. The widget uses this: when `subject` doesn't equal the logged-in userId
+  it stops showing those numbers (otherwise you'd see the previous account's usage), shows
+  "syncing the new account's usage…" instead, and fast-polls (every 3s, up to ~150s) until the
+  relay catches up. If it stays stale for a long time, restarting Mirasim forces a refresh.
 
 ## Liquid-glass engine
 
