@@ -12,11 +12,30 @@ use std::sync::Mutex;
 
 const PREFIX: &str = "mrs1:";
 
-/// 取某令牌对应账号的邮箱。key 从 home 下的 secret.key 派生（单条缓存，见下）。
-pub fn email_of(home: &Path, token: &str) -> Option<String> {
+/// 账号在令牌 JWT 里的可展示字段（邮箱、套餐、套餐到期）。
+#[derive(Default)]
+pub struct Account {
+    pub email: Option<String>,
+    pub plan: Option<String>,
+    /// 套餐到期，Unix 秒（JWT `plan_exp` claim）。
+    pub plan_exp: Option<i64>,
+}
+
+/// 解某令牌，取出账号可展示字段。key 从 home 下的 secret.key 派生（单条缓存，见下）。
+pub fn account_of(home: &Path, token: &str) -> Option<Account> {
     let key = master_key(home)?;
     let jwt = decrypt_token(token, &key)?;
-    email_from_jwt(&jwt)
+    let claims = jwt_claims(&jwt)?;
+    Some(Account {
+        email: str_claim(&claims, "email"),
+        plan: str_claim(&claims, "plan"),
+        plan_exp: claims.get("plan_exp").and_then(|v| v.as_i64()),
+    })
+}
+
+/// 取某令牌对应账号的邮箱（account_of 的薄封装）。
+pub fn email_of(home: &Path, token: &str) -> Option<String> {
+    account_of(home, token)?.email
 }
 
 /// 主密钥单条缓存：DPAPI 解一次即可（secret.key 不在会话内轮换）。按 home 路径
@@ -63,13 +82,22 @@ fn decrypt_token(token: &str, key: &[u8; 32]) -> Option<String> {
     String::from_utf8(plain).ok()
 }
 
-/// 从 JWT 里取 `email` claim。
-fn email_from_jwt(jwt: &str) -> Option<String> {
+/// 解 JWT 的 payload 段为 claims 对象。
+fn jwt_claims(jwt: &str) -> Option<serde_json::Value> {
     let payload = jwt.split('.').nth(1)?;
     let bytes = b64_url(payload)?;
-    let v: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
-    let email = v.get("email")?.as_str()?.trim();
-    (!email.is_empty()).then(|| email.to_string())
+    serde_json::from_slice(&bytes).ok()
+}
+
+/// 取一个非空字符串 claim。
+fn str_claim(claims: &serde_json::Value, key: &str) -> Option<String> {
+    let s = claims.get(key)?.as_str()?.trim();
+    (!s.is_empty()).then(|| s.to_string())
+}
+
+/// 从 JWT 里取 `email` claim（供测试用）。
+fn email_from_jwt(jwt: &str) -> Option<String> {
+    str_claim(&jwt_claims(jwt)?, "email")
 }
 
 /// 邮箱本地部分（@ 前），用于默认快照名。非邮箱串原样返回。
@@ -190,6 +218,21 @@ mod tests {
     fn wrong_key_fails_gracefully() {
         let token = make_token(&[1u8; 32], &jwt_with_email("a@b.com"));
         assert!(decrypt_token(&token, &[2u8; 32]).is_none());
+    }
+
+    #[test]
+    fn decrypt_then_extract_plan_and_exp() {
+        let key = [9u8; 32];
+        let header = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"{\"alg\":\"HS256\"}");
+        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
+            b"{\"email\":\"alice@example.com\",\"plan\":\"plus\",\"plan_exp\":1789029052}",
+        );
+        let jwt = format!("{header}.{payload}.sig");
+        let got = decrypt_token(&make_token(&key, &jwt), &key).unwrap();
+        let claims = jwt_claims(&got).unwrap();
+        assert_eq!(str_claim(&claims, "plan").as_deref(), Some("plus"));
+        assert_eq!(claims.get("plan_exp").and_then(|v| v.as_i64()), Some(1789029052));
+        assert_eq!(str_claim(&claims, "email").as_deref(), Some("alice@example.com"));
     }
 
     #[test]

@@ -65,6 +65,10 @@ layout (`~/.mirasim/_account_switcher/{profiles,backups}`) and can be used inter
   leaves the process. If it can't be decrypted (a snapshot from another machine, or the key
   is unreadable) it falls back to the account's display name. New snapshots default to being
   named after the email's local part.
+- **The plan badge and expiry follow the account** (v0.5.0): the header's plan badge and
+  "plan expiry" come from the same JWT's `plan` / `plan_exp` claims, so they refresh the
+  moment you switch accounts. They fall back to `planLabel` / `validUntil` in the config
+  only when the token can't be decrypted (so those two config keys are just defaults now).
 
 ## Liquid-glass engine
 
@@ -103,8 +107,8 @@ tray's "refresh now":
   "autostart": true,          // start on login (HKCU Run key, follows the exe's location)
   "accent": "auto",           // accent: auto = sample from wallpaper (avoiding green) | blue | amber | ink | "#hex"
   "ink": "#000000",           // optional: pin the text color (omit = auto black/white by wallpaper brightness)
-  "planLabel": "MAX",         // badge text
-  "validUntil": "2027-08-11", // plan expiry (display only)
+  "planLabel": "MAX",         // badge text (fallback only, when the plan can't be read from the token)
+  "validUntil": "2027-08-11", // plan-expiry fallback (normally taken from the token's plan_exp)
   "refreshSeconds": 60,
   "alwaysOnTop": true,
   "glass": {

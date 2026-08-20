@@ -53,6 +53,9 @@ DirectX 渲染管线，常驻内存 ~40 MB。附带一个零依赖的账号切�
   `email` claim 即账号邮箱。解密链路 = DPAPI 还原 `secret.key`（`CryptUnprotectData`，
   当前用户可解）→ AES-256-GCM 解令牌 → 读 JWT。全程本机、不联网，密文不出进程；
   解不出（异机快照/密钥不可读）时回退显示账号名。新快照默认以邮箱本地部分命名。
+- **套餐徽章与到期跟着账号走**（v0.5.0）：头部的套餐徽章和「套餐到期」取自同一枚 JWT
+  的 `plan` / `plan_exp` claim，切换账号即刷新；解不出时才回退到 config 里的
+  `planLabel` / `validUntil`（所以这两项现在只是兜底默认值）。
 
 ## 液态玻璃引擎
 
@@ -89,8 +92,8 @@ node --test ui/tests/*.test.js       # JS 单测（派生计算/裁剪映射/位
   "autostart": true,          // 开机自启（HKCU Run 键，随 exe 位置自动更新）
   "accent": "auto",           // 主色：auto 壁纸取色（绕开绿）| blue | amber | ink | "#hex"
   "ink": "#000000",           // 可选：钉死字色（省略 = 随壁纸明暗自动黑/白字）
-  "planLabel": "MAX",         // 徽章文字
-  "validUntil": "2027-08-11", // 套餐到期（展示用）
+  "planLabel": "MAX",         // 徽章文字（仅当无法从账号令牌解出套餐时的兜底）
+  "validUntil": "2027-08-11", // 套餐到期兜底（正常取自账号令牌的 plan_exp）
   "refreshSeconds": 60,
   "alwaysOnTop": true,
   "glass": {

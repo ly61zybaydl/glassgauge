@@ -51,6 +51,11 @@ pub struct CurrentMeta {
     pub name: String,
     /// 从令牌 JWT 解出的邮箱；解不出为 None，前端回退到 name。
     pub email: Option<String>,
+    /// 从令牌 JWT 解出的套餐类型（如 "plus"）；解不出为 None，前端回退 config.planLabel。
+    pub plan: Option<String>,
+    /// 套餐到期，Unix 秒（JWT plan_exp）；解不出为 None，前端回退 config.validUntil。
+    #[serde(rename = "planExp")]
+    pub plan_exp: Option<i64>,
     /// 访问令牌过期时间（Unix 秒）；无则 0。刷新由 mirasim 自己做，仅展示用。
     pub exp: i64,
     /// 对应快照名（同 userId）；没有则 None。
@@ -152,10 +157,15 @@ impl Store {
         Self { home }
     }
 
+    /// 从一个 auth 块的 token 解出账号可展示字段（邮箱/套餐/到期）。
+    fn account_of(&self, auth: &Value) -> Option<crate::token::Account> {
+        let token = auth.get("token").and_then(Value::as_str)?;
+        crate::token::account_of(&self.home, token)
+    }
+
     /// 从一个 auth 块的 token 解出邮箱（本机 secret.key 可解时）。
     fn email_of(&self, auth: &Value) -> Option<String> {
-        let token = auth.get("token").and_then(Value::as_str)?;
-        crate::token::email_of(&self.home, token)
+        self.account_of(auth)?.email
     }
 
     fn setting_path(&self) -> PathBuf {
@@ -302,10 +312,14 @@ impl Store {
             })
             .collect();
 
+        // 当前账号一次性解出邮箱/套餐/到期（同一 token，避免多次解密）
+        let acct = self.account_of(&auth);
         let current = logged_in.then(|| CurrentMeta {
             user_id: cur_uid.clone(),
             name: auth.get("name").and_then(Value::as_str).unwrap_or("").to_string(),
-            email: self.email_of(&auth),
+            email: acct.as_ref().and_then(|a| a.email.clone()),
+            plan: acct.as_ref().and_then(|a| a.plan.clone()),
+            plan_exp: acct.as_ref().and_then(|a| a.plan_exp),
             exp: auth.get("exp").and_then(Value::as_i64).unwrap_or(0),
             profile: profiles
                 .iter()

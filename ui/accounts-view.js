@@ -18,6 +18,21 @@ export function accountItems(view, nowMs) {
   return items;
 }
 
+/** 头部徽章：当前账号套餐（大写，如 PLUS），解不出时回退 config 值。 */
+export function planBadge(view, fallback) {
+  const p = view?.current?.plan;
+  return p ? p.toUpperCase() : fallback;
+}
+
+/** 头部到期：当前账号 planExp（Unix 秒）→ YYYY-MM-DD，解不出时回退 config 值。 */
+export function planExpiry(view, fallback) {
+  const t = view?.current?.planExp;
+  if (!t) return fallback;
+  const d = new Date(t * 1000);
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
 /** 快照保存时间 -> 相对文案。 */
 export function savedAgo(ms, nowMs) {
   if (!ms) return "时间未知";

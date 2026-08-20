@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { accountItems, currentLabel, savedAgo, esc } from "../accounts-view.js";
+import { accountItems, currentLabel, savedAgo, esc, planBadge, planExpiry } from "../accounts-view.js";
 
 const NOW = 1_700_000_000_000;
 
@@ -33,6 +33,19 @@ test("savedAgo 分档", () => {
   assert.equal(savedAgo(NOW - 3 * 3600_000, NOW), "3 小时前");
   assert.equal(savedAgo(NOW - 5 * 86400_000, NOW), "5 天前");
   assert.match(savedAgo(NOW - 400 * 86400_000, NOW), /^\d{4}-\d{2}-\d{2}$/);
+});
+
+test("planBadge：账号套餐大写优先，回退 config", () => {
+  assert.equal(planBadge({ current: { plan: "plus" } }, "MAX"), "PLUS");
+  assert.equal(planBadge({ current: { plan: null } }, "MAX"), "MAX");
+  assert.equal(planBadge(null, "MAX"), "MAX");
+});
+
+test("planExpiry：账号 planExp(Unix秒) → YYYY-MM-DD，回退 config", () => {
+  // 1789029052 = 2026-09-10 (UTC 08:30)，本地 UTC+8 亦为该日
+  assert.match(planExpiry({ current: { planExp: 1789029052 } }, "–"), /^2026-09-10$/);
+  assert.equal(planExpiry({ current: { planExp: null } }, "2027-08-11"), "2027-08-11");
+  assert.equal(planExpiry(null, "–"), "–");
 });
 
 test("esc 转义全部危险字符", () => {

@@ -1,5 +1,5 @@
 // 渲染与数据环。派生计算全部来自 derive.js；本文件只做取数节奏和 DOM。
-import { accountItems, currentLabel, esc } from "./accounts-view.js";
+import { accountItems, currentLabel, esc, planBadge, planExpiry } from "./accounts-view.js";
 import { deriveAll } from "./derive.js";
 import { initGlass, recropTo, reloadWallpaper, teardownGlass } from "./glass.js";
 import { applyWallpaperTheme } from "./theme.js";
@@ -151,8 +151,8 @@ function expandedHtml(all, connected) {
       <div class="head">
         <span class="${dotCls}"></span>
         <span class="title">Mirasim 用量</span>
-        <span class="badge">${config?.planLabel ?? "MAX"}</span>
-        <span class="exp">套餐到期 ${config?.validUntil ?? "–"}</span>
+        <span class="badge">${esc(planBadge(accounts, config?.planLabel ?? "MAX"))}</span>
+        <span class="exp">套餐到期 ${esc(planExpiry(accounts, config?.validUntil ?? "–"))}</span>
         <span class="gear${setOpen ? " on" : ""}" data-gg-interactive data-set-act="toggle">⚙</span>
       </div>
       ${setHtml()}
