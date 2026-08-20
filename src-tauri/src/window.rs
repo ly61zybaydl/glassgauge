@@ -1,0 +1,402 @@
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::fs;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use tauri::menu::{CheckMenuItem, Menu, MenuItem};
+use tauri::tray::TrayIconBuilder;
+use tauri::{App, AppHandle, Emitter, Manager, PhysicalPosition, WebviewWindow};
+
+pub const DEFAULT_CONFIG: &str = include_str!("../../config.json");
+
+pub(crate) fn appdata_dir() -> PathBuf {
+    let base = std::env::var("APPDATA").unwrap_or_else(|_| ".".into());
+    let dir = PathBuf::from(base).join("glassgauge");
+    let _ = fs::create_dir_all(&dir);
+    dir
+}
+
+/// 返回用户配置；文件缺失时落一份默认值，文件损坏时返回默认值但不覆盖用户的文件。
+#[tauri::command]
+pub fn get_config() -> String {
+    let path = appdata_dir().join("config.json");
+    match fs::read_to_string(&path) {
+        Ok(s) => {
+            if serde_json::from_str::<Value>(&s).is_ok() {
+                s
+            } else {
+                DEFAULT_CONFIG.to_string()
+            }
+        }
+        Err(_) => {
+            let _ = fs::write(&path, DEFAULT_CONFIG);
+            DEFAULT_CONFIG.to_string()
+        }
+    }
+}
+
+/// 玻璃参数合并（纯函数，可测）：只动给到的键，夹紧到可用区间。
+fn merge_glass(cfg: &mut Value, alpha: Option<f64>, blur: Option<f64>) {
+    if !cfg.get("glass").map(Value::is_object).unwrap_or(false) {
+        cfg["glass"] = serde_json::json!({});
+    }
+    if let Some(a) = alpha {
+        cfg["glass"]["alpha"] = serde_json::json!(a.clamp(0.0, 0.5));
+    }
+    if let Some(b) = blur {
+        cfg["glass"]["blur"] = serde_json::json!(b.clamp(0.0, 20.0));
+    }
+}
+
+/// 面板滑杆：白纱 alpha / 磨砂 blur 持久化到 config.json，并热更 refract 引擎。
+/// （wallpaper 模式的滤镜由前端自己按新配置重建；live 模式的模糊是 DWM 固定值。）
+#[tauri::command]
+pub fn set_glass(
+    app: tauri::AppHandle,
+    alpha: Option<f64>,
+    blur: Option<f64>,
+) -> Result<(), String> {
+    let path = appdata_dir().join("config.json");
+    let mut cfg: Value = fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_else(|| serde_json::from_str(DEFAULT_CONFIG).unwrap());
+    merge_glass(&mut cfg, alpha, blur);
+    let tmp = path.with_extension(format!("tmp-{}", std::process::id()));
+    fs::write(&tmp, serde_json::to_string_pretty(&cfg).unwrap()).map_err(|e| e.to_string())?;
+    fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
+    if let Some(h) = app.try_state::<crate::engine::EngineHandle>() {
+        let _ = h
+            .0
+            .lock()
+            .unwrap()
+            .send(crate::engine::Cmd::SetCfg(crate::engine::GlassCfg::from_config(&cfg)));
+    }
+    Ok(())
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct WinState {
+    pub x: i32,
+    pub y: i32,
+}
+
+#[tauri::command]
+pub fn save_state(x: i32, y: i32) {
+    let _ = fs::write(
+        appdata_dir().join("state.json"),
+        serde_json::to_string(&WinState { x, y }).unwrap(),
+    );
+}
+
+fn load_state() -> Option<WinState> {
+    serde_json::from_str(&fs::read_to_string(appdata_dir().join("state.json")).ok()?).ok()
+}
+
+fn monitor_contains(win: &WebviewWindow, x: i32, y: i32) -> bool {
+    if let Ok(monitors) = win.available_monitors() {
+        for m in monitors {
+            let p = m.position();
+            let s = m.size();
+            if x >= p.x && x < p.x + s.width as i32 && y >= p.y && y < p.y + s.height as i32 {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn snap_primary_topright(win: &WebviewWindow) {
+    let (Ok(Some(m)), Ok(size)) = (win.primary_monitor(), win.outer_size()) else {
+        return;
+    };
+    let p = m.position();
+    let s = m.size();
+    let x = p.x + s.width as i32 - size.width as i32 - 16;
+    let y = p.y + 16;
+    let _ = win.set_position(PhysicalPosition::new(x, y));
+}
+
+/// 生效模式（spec §9）：`mode` 键优先；旧 `acrylic` 布尔兼容映射；都没有 → refract。
+fn config_mode(cfg: &Value) -> String {
+    if let Some(m) = cfg.get("mode").and_then(Value::as_str) {
+        return m.to_string();
+    }
+    match cfg.get("acrylic").and_then(Value::as_bool) {
+        Some(true) => "live".into(),
+        Some(false) => "wallpaper".into(),
+        None => "refract".into(),
+    }
+}
+
+fn send_engine_geometry(win: &WebviewWindow, handle: &crate::engine::EngineHandle) {
+    let (Ok(pos), Ok(size), Ok(scale)) = (
+        win.outer_position(),
+        win.outer_size(),
+        win.scale_factor(),
+    ) else {
+        return;
+    };
+    let rect = crate::engine::geometry::Rect::new(
+        pos.x,
+        pos.y,
+        pos.x + size.width as i32,
+        pos.y + size.height as i32,
+    );
+    let _ = handle
+        .0
+        .lock()
+        .unwrap()
+        .send(crate::engine::Cmd::Geometry {
+            win: rect,
+            dpr: scale,
+        });
+}
+
+pub fn setup(app: &mut App) -> tauri::Result<()> {
+    let win = app.get_webview_window("main").expect("main window missing");
+
+    let cfg: Value = serde_json::from_str(&get_config()).unwrap_or(Value::Null);
+    // mode（spec §9）：refract=原生实时折射（默认）| live=DWM 亚克力（8px 圆角）
+    // | wallpaper=壁纸折射。refract 失败时引擎自己降级到 wallpaper 并广播。
+    let mode = config_mode(&cfg);
+    app.manage(crate::engine::GlassMode(std::sync::Mutex::new(mode.clone())));
+    let on_top = cfg
+        .get("alwaysOnTop")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    let _ = win.set_always_on_top(on_top);
+
+    // 开机自启（HKCU Run 键，免管理员）：每次启动按当前 exe 路径刷新，挪位置自动跟
+    let autostart = cfg
+        .get("autostart")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    sync_autostart(autostart);
+
+    // DWM 圆角只在 live 模式开（裁亚克力四角必需）；refract/wallpaper 显式关——
+    // DWM 的 8px 弧带自己的描边/AA，会在 20px 玻璃弧外画出一圈白边。
+    dwm_round_corners(&win, mode == "live");
+
+    let spiking = std::env::var("GG_SPIKE").is_ok();
+    match mode.as_str() {
+        "live" => {
+            // 失败（旧系统/远程桌面等）只降级为纯透明，不报错弹窗
+            if let Err(e) = window_vibrancy::apply_acrylic(&win, Some((255, 255, 255, 5))) {
+                eprintln!("acrylic unavailable, transparent fallback: {e}");
+            }
+        }
+        "refract" if !spiking => {
+            let hwnd = win.hwnd().map(|h| h.0 as isize).unwrap_or(0);
+            // 截图隐形：进程期常开（spec §8），避免切换闪烁
+            crate::engine::exclude_from_capture(hwnd);
+            // 初始几何在位置恢复后（setup 末尾）再发，这里只建线程和事件桥
+            let eng = crate::engine::start(
+                app.handle().clone(),
+                hwnd,
+                crate::engine::GlassCfg::from_config(&cfg),
+            );
+            app.manage(eng);
+            let app2 = app.handle().clone();
+            let win2 = win.clone();
+            win.on_window_event(move |ev| {
+                use tauri::WindowEvent::{Moved, Resized, ScaleFactorChanged};
+                if matches!(ev, Moved(_) | Resized(_) | ScaleFactorChanged { .. }) {
+                    if let Some(h) = app2.try_state::<crate::engine::EngineHandle>() {
+                        send_engine_geometry(&win2, &h);
+                    }
+                }
+            });
+        }
+        _ => {} // wallpaper（或 spike 占用窗口时）：前端壁纸层处理
+    }
+
+    match load_state() {
+        Some(st) if monitor_contains(&win, st.x, st.y) => {
+            let _ = win.set_position(PhysicalPosition::new(st.x, st.y));
+        }
+        _ => snap_primary_topright(&win),
+    }
+    let _ = win.show();
+
+    // 位置已恢复：现在发初始几何，引擎第一帧就在正确位置
+    if let Some(h) = app.try_state::<crate::engine::EngineHandle>() {
+        send_engine_geometry(&win, &h);
+    }
+
+    // Phase 0-3 技术验证入口（GG_SPIKE=b|a|cap|pipe），Phase 5 清理
+    if let Ok(which) = std::env::var("GG_SPIKE") {
+        let hwnd = win.hwnd().map(|h| h.0 as isize).unwrap_or(0);
+        let pos = win
+            .outer_position()
+            .unwrap_or(tauri::PhysicalPosition { x: 0, y: 0 });
+        let size = win.outer_size().unwrap_or(tauri::PhysicalSize {
+            width: 244,
+            height: 62,
+        });
+        crate::engine::spike::run(&which, hwnd, size.width, size.height, pos.x, pos.y);
+    }
+
+    crate::wallpaper::start_watcher(app.handle().clone());
+    build_tray(app.handle(), on_top, mode == "refract" && !spiking)?;
+    Ok(())
+}
+
+/// autostart 配置同步到 HKCU\...\Run："glassgauge" = 当前 exe 路径；false 删键。
+fn sync_autostart(enable: bool) {
+    use winreg::enums::HKEY_CURRENT_USER;
+    use winreg::RegKey;
+    let Ok((key, _)) = RegKey::predef(HKEY_CURRENT_USER)
+        .create_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Run")
+    else {
+        return;
+    };
+    if enable {
+        if let Ok(exe) = std::env::current_exe() {
+            let _ = key.set_value("glassgauge", &format!("\"{}\"", exe.display()));
+        }
+    } else {
+        let _ = key.delete_value("glassgauge");
+    }
+}
+
+/// 前端启动时查询生效模式（之后靠 glass-mode 事件跟进）。
+#[tauri::command]
+pub fn get_glass_mode(state: tauri::State<crate::engine::GlassMode>) -> String {
+    state.0.lock().unwrap().clone()
+}
+
+/// DWM 原生圆角开关 + 去掉 DWM 描边。round=true：合成层把整个窗口面
+/// （含亚克力材质）裁成 ~8px 圆角（live 模式必需，CSS 圆角须与之一致）；
+/// round=false：显式不裁（refract/wallpaper 自己画轮廓）。两种都关 DWM 描边。
+fn dwm_round_corners(win: &WebviewWindow, round: bool) {
+    #[link(name = "dwmapi")]
+    extern "system" {
+        fn DwmSetWindowAttribute(
+            hwnd: isize,
+            attr: u32,
+            val: *const std::ffi::c_void,
+            size: u32,
+        ) -> i32;
+    }
+    let Ok(hwnd) = win.hwnd() else { return };
+    let hwnd = hwnd.0 as isize;
+    unsafe {
+        // DWMWA_WINDOW_CORNER_PREFERENCE(33): DWMWCP_ROUND=2 / DWMWCP_DONOTROUND=1
+        let pref: u32 = if round { 2 } else { 1 };
+        DwmSetWindowAttribute(hwnd, 33, &pref as *const u32 as _, 4);
+        let none: u32 = 0xFFFF_FFFE; // DWMWA_BORDER_COLOR(34) = DWMWA_COLOR_NONE
+        DwmSetWindowAttribute(hwnd, 34, &none as *const u32 as _, 4);
+    }
+}
+
+fn build_tray(app: &AppHandle, initial_on_top: bool, has_engine: bool) -> tauri::Result<()> {
+    let refresh = MenuItem::with_id(app, "refresh", "立即刷新", true, None::<&str>)?;
+    let pin = CheckMenuItem::with_id(app, "pin", "置顶", true, initial_on_top, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+    // 实时玻璃与可截图物理互斥（玻璃会拍到自己）：勾上=引擎暂停、壁纸兜底、可截图
+    let shot = if has_engine {
+        Some(CheckMenuItem::with_id(
+            app,
+            "shot",
+            "截图模式（玻璃暂用壁纸）",
+            true,
+            false,
+            None::<&str>,
+        )?)
+    } else {
+        None
+    };
+    // 截图照不到挂件（refract 剔除），debug 构建给一条落盘出口做验收
+    let dump = if cfg!(debug_assertions) {
+        Some(MenuItem::with_id(app, "dump", "导出玻璃帧", true, None::<&str>)?)
+    } else {
+        None
+    };
+    let mut items: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = vec![&refresh];
+    if let Some(s) = &shot {
+        items.push(s);
+    }
+    if let Some(d) = &dump {
+        items.push(d);
+    }
+    items.push(&pin);
+    items.push(&quit);
+    let menu = Menu::with_items(app, &items)?;
+
+    let pinned = Arc::new(AtomicBool::new(initial_on_top));
+    let shot_on = Arc::new(AtomicBool::new(false));
+
+    TrayIconBuilder::with_id("main-tray")
+        .icon(app.default_window_icon().expect("bundled icon").clone())
+        .tooltip("Mirasim 用量")
+        .menu(&menu)
+        .show_menu_on_left_click(true)
+        .on_menu_event(move |app, ev| match ev.id().as_ref() {
+            "refresh" => {
+                let _ = app.emit("manual-refresh", ());
+                if let Some(h) = app.try_state::<crate::engine::EngineHandle>() {
+                    let _ = h.0.lock().unwrap().send(crate::engine::Cmd::Refresh);
+                }
+            }
+            "dump" => {
+                if let Some(h) = app.try_state::<crate::engine::EngineHandle>() {
+                    let _ = h.0.lock().unwrap().send(crate::engine::Cmd::Dump);
+                }
+            }
+            "shot" => {
+                let Some(w) = app.get_webview_window("main") else { return };
+                let Ok(hwnd) = w.hwnd().map(|h| h.0 as isize) else { return };
+                let Some(h) = app.try_state::<crate::engine::EngineHandle>() else { return };
+                let now_on = !shot_on.load(Ordering::Relaxed);
+                shot_on.store(now_on, Ordering::Relaxed);
+                if now_on {
+                    // 先停引擎再解除剔除，避免玻璃拍到自己的过渡帧
+                    let _ = h.0.lock().unwrap().send(crate::engine::Cmd::Pause);
+                    std::thread::sleep(std::time::Duration::from_millis(180));
+                    crate::engine::set_capture_visibility(hwnd, true);
+                } else {
+                    crate::engine::set_capture_visibility(hwnd, false);
+                    let _ = h.0.lock().unwrap().send(crate::engine::Cmd::Resume);
+                }
+            }
+            "pin" => {
+                if let Some(w) = app.get_webview_window("main") {
+                    let now = !pinned.load(Ordering::Relaxed);
+                    pinned.store(now, Ordering::Relaxed);
+                    let _ = w.set_always_on_top(now);
+                }
+            }
+            "quit" => app.exit(0),
+            _ => {}
+        })
+        .build(app)?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn merge_glass_touches_only_given_keys_and_clamps() {
+        let mut cfg = json!({"glass": {"alpha": 0.03, "blur": 4.0, "band": 16}});
+        merge_glass(&mut cfg, Some(0.12), None);
+        assert_eq!(cfg["glass"]["alpha"], 0.12);
+        assert_eq!(cfg["glass"]["blur"], 4.0);
+        assert_eq!(cfg["glass"]["band"], 16);
+        merge_glass(&mut cfg, Some(9.0), Some(-3.0));
+        assert_eq!(cfg["glass"]["alpha"], 0.5);
+        assert_eq!(cfg["glass"]["blur"], 0.0);
+    }
+
+    #[test]
+    fn merge_glass_creates_missing_glass_object() {
+        let mut cfg = json!({"planLabel": "MAX"});
+        merge_glass(&mut cfg, None, Some(7.5));
+        assert_eq!(cfg["glass"]["blur"], 7.5);
+        assert_eq!(cfg["planLabel"], "MAX");
+    }
+}

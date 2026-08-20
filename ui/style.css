@@ -1,0 +1,245 @@
+/* glassgauge — 雪白磨砂（spec §6/§7）。颜色/透明度由 theme.js 写 CSS 变量。 */
+* { box-sizing: border-box; user-select: none; }
+
+:root {
+  --alpha: 0.03;
+  --ink: #171a22;
+  --accent: #3b82d8;
+  --shell-border: rgba(255, 255, 255, 0.26);
+  --track: rgba(0, 0, 0, 0.12);
+  --tick: rgba(0, 0, 0, 0.45);
+  --radius-collapsed: 20px;
+  --radius-card: 14px;
+}
+
+html, body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+  font: 13px/1.45 -apple-system, "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  color: var(--ink);
+}
+
+/* L2：壁纸折射层。外层负责圆角裁剪（滤镜的模糊会溢出矩形，必须裁在父级）；
+   内层 #wallpaper-glass 由 glass.js 摆位：窗口尺寸四周外扩、壁纸为背景、挂位移滤镜。 */
+#wallpaper-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  border-radius: var(--radius-collapsed);
+  pointer-events: none;
+}
+#wallpaper-glass {
+  position: absolute;
+  background-repeat: no-repeat;
+}
+
+#app {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+}
+
+/* 玻璃光学（spec §6）：玻璃本体（折射/模糊）由引擎或壁纸层提供，辨识度靠这里 ——
+   顶部受光棱、左棱、右下弱反光、底部厚度内影、斜向反光扫过。
+   整体向内收 1px：白色元素必须全部落在不透明玻璃上，轮廓弧由玻璃层独占，
+   否则两层抗锯齿弧错位处的白像素直接叠在裸桌面上，圆角出白边。 */
+.shell {
+  position: absolute;
+  inset: 1px;
+  padding: 10px 12px;
+  border-radius: calc(var(--radius-collapsed) - 1px);
+  background: rgba(255, 255, 255, var(--alpha));
+  /* 描边/受光棱由引擎原生画在裁剪弧上（与轮廓数学重合）；
+     CSS 只留内部厚度阴影，任何白色都不允许贴近轮廓 */
+  border: none;
+  box-shadow: inset 0 -10px 18px -14px rgba(0, 0, 0, 0.16);
+}
+.shell::after {
+  content: "";
+  position: absolute;
+  inset: 2px;
+  border-radius: inherit;
+  background: linear-gradient(115deg,
+    rgba(255, 255, 255, 0.11) 0%,
+    rgba(255, 255, 255, 0.03) 34%,
+    transparent 55%);
+  pointer-events: none;
+}
+
+/* 展开态（spec 形态 C）：定宽 302（窗口 304−两侧 1px），高度自适应内容，
+   JS 量完自然高再调窗口尺寸，引擎跟随 Resized 重建玻璃 */
+.shell.expanded {
+  bottom: auto;
+  height: auto;
+  width: 302px;
+  padding: 12px 13px 13px;
+}
+.head { display: flex; align-items: center; gap: 7px; }
+.title { font-size: 13.5px; font-weight: 650; }
+.badge {
+  font-size: 9.5px; font-weight: 750; letter-spacing: 0.7px;
+  padding: 2px 6px; border-radius: 5px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, transparent);
+}
+.exp { margin-left: auto; font-size: 9.5px; opacity: 0.55; }
+.card {
+  margin-top: 9px;
+  padding: 10px 11px 9px;
+  border-radius: var(--radius-card);
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow: inset 0 0 12px -8px rgba(0, 0, 0, 0.18);
+}
+.r1 { display: flex; align-items: baseline; gap: 8px; }
+.win { font-size: 12.5px; font-weight: 600; }
+.rem { margin-left: auto; font-size: 10px; opacity: 0.6; }
+.pct2 { font-size: 19px; font-weight: 780; letter-spacing: -0.3px; color: var(--accent); }
+.card .bar { height: 7px; margin: 7px 0 6px; }
+.l3 { display: flex; font-size: 9.5px; opacity: 0.62; }
+.l3 .d { margin-left: auto; }
+
+/* 玻璃设置（⚙ 弹出行）。齿轮字形只有 12px，命中区靠 padding 撑到 ~24px——
+   差一两像素点到 .head 会变成窗口拖拽把 click 吃掉 */
+.gear {
+  font-size: 12px;
+  opacity: 0.45;
+  cursor: pointer;
+  line-height: 1;
+  padding: 6px;
+  margin: -6px -6px -6px -4px;
+}
+.gear:hover, .gear.on { opacity: 0.9; }
+.set {
+  margin-top: 9px;
+  padding: 8px 11px 7px;
+  border-radius: var(--radius-card);
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow: inset 0 0 12px -8px rgba(0, 0, 0, 0.18);
+}
+.set-row { display: flex; align-items: center; gap: 8px; }
+.set-row + .set-row { margin-top: 6px; }
+.set-k { font-size: 10px; opacity: 0.6; flex: none; width: 26px; }
+.set-v { font-size: 9.5px; opacity: 0.6; flex: none; width: 30px; text-align: right; font-variant-numeric: tabular-nums; }
+.set-hint { margin-top: 6px; font-size: 9px; opacity: 0.45; }
+.set input[type="range"] {
+  flex: 1;
+  min-width: 0;
+  appearance: none;
+  height: 5px;
+  border-radius: 99px;
+  background: var(--track);
+  outline: none;
+  cursor: pointer;
+}
+.set input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  width: 13px; height: 13px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid rgba(255, 255, 255, 0.85);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+}
+
+/* 账号切换：语言同 .card（白 10% 底 + 内影），行高更紧凑 */
+.acct {
+  margin-top: 9px;
+  border-radius: var(--radius-card);
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow: inset 0 0 12px -8px rgba(0, 0, 0, 0.18);
+  overflow: hidden;
+}
+.acct-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 11px;
+  cursor: pointer;
+}
+.acct-row:hover { background: rgba(255, 255, 255, 0.1); }
+.acct-row.busy { cursor: progress; opacity: 0.65; }
+.acct-k { font-size: 10px; opacity: 0.55; flex: none; }
+.acct-name { font-size: 12.5px; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acct-caret { margin-left: auto; font-size: 9px; opacity: 0.5; transition: transform 0.15s; }
+.acct-caret.open { transform: rotate(180deg); }
+.acct-list {
+  border-top: 1px solid rgba(255, 255, 255, 0.16);
+  padding: 4px 0;
+  max-height: 196px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.acct-item {
+  display: flex; align-items: center; gap: 7px;
+  padding: 6px 11px;
+  cursor: pointer;
+}
+.acct-item:hover { background: rgba(255, 255, 255, 0.12); }
+.acct-item.cur { cursor: default; }
+.acct-dot {
+  width: 5px; height: 5px; border-radius: 50%;
+  background: transparent; border: 1px solid rgba(0, 0, 0, 0.25);
+  flex: none;
+}
+.acct-dot.on { background: var(--accent); border-color: transparent; box-shadow: 0 0 6px var(--accent); }
+.acct-item-name { font-size: 11.5px; font-weight: 600; white-space: nowrap; flex: none; }
+.acct-item-sub {
+  margin-left: auto;
+  min-width: 0;
+  font-size: 9px; opacity: 0.55;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.acct-del {
+  flex: none;
+  font-size: 9px; opacity: 0.45;
+  padding: 2px 5px; border-radius: 5px;
+}
+.acct-del:hover { opacity: 1; background: rgba(226, 80, 76, 0.16); color: #c8403c; }
+.acct-del.arm { opacity: 1; background: rgba(226, 80, 76, 0.16); color: #c8403c; font-weight: 650; }
+.acct-item.save { font-size: 10.5px; opacity: 0.72; }
+.acct-hint { padding: 6px 11px; font-size: 9.5px; opacity: 0.55; line-height: 1.5; }
+.acct-note { padding: 6px 11px 7px; font-size: 9.5px; border-top: 1px solid rgba(255, 255, 255, 0.16); }
+.acct-note.ok { opacity: 0.72; }
+.acct-note.err { color: #c8403c; }
+
+/* 展开态空数据卡位（relay 断开/未登录时账号管理仍可用） */
+.card.empty { font-size: 10.5px; opacity: 0.6; text-align: center; padding: 14px 11px; }
+
+/* 折叠态 */
+.top { display: flex; align-items: center; gap: 8px; }
+.dot {
+  width: 6.5px; height: 6.5px; border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 7px var(--accent);
+  flex: none;
+}
+.dot.grey { background: #9aa0ab; box-shadow: none; }
+.dot.red { background: #e2504c; box-shadow: 0 0 7px #e2504c; }
+.dot.amber { background: #e8a13d; box-shadow: 0 0 7px #e8a13d; }
+.dot.blue { background: #4c9be2; box-shadow: 0 0 7px #4c9be2; }
+.who { font-size: 10.5px; opacity: 0.72; white-space: nowrap; }
+.pct {
+  margin-left: auto;
+  font-size: 22px; font-weight: 800; letter-spacing: -0.5px;
+  color: var(--accent);
+}
+.bar {
+  position: relative;
+  height: 6px; margin-top: 8px;
+  border-radius: 99px;
+  background: var(--track);
+}
+.fill {
+  position: absolute; left: 0; top: 0; bottom: 0;
+  border-radius: 99px;
+  background: var(--accent);
+}
+.tick {
+  position: absolute; top: -2px; bottom: -2px; width: 2px;
+  border-radius: 2px;
+  background: var(--tick);
+}
+.stale { opacity: 0.55; }
