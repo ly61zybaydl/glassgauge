@@ -1,3 +1,5 @@
+[English](README.en.md) | **简体中文**
+
 # glassgauge
 
 > A liquid-glass usage widget for the [mirasim](https://mirasim.ai) relay on Windows,
