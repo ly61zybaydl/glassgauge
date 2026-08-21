@@ -1,25 +1,24 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { deriveWindow, deriveAll, deriveStatus, resetText, tightest, limitsMatchAccount, fmtAmount } from "../derive.js";
+import { deriveWindow, deriveAll, deriveStatus, resetText, tightest, limitsMatchAccount, fmtUsd } from "../derive.js";
 
 const fixture = JSON.parse(
   new TextDecoder().decode(readFileSync(new URL("./fixtures/limits.json", import.meta.url))),
 );
 
-test("fmtAmount：额度缩写", () => {
-  assert.equal(fmtAmount(878), "878");
-  assert.equal(fmtAmount(878.6), "879");
-  assert.equal(fmtAmount(26100), "26.1k");
-  assert.equal(fmtAmount(320000), "320.0k");
-  assert.equal(fmtAmount(0), "0");
+test("fmtUsd：额度 → 估算美元（默认 100 credits = $1）", () => {
+  assert.equal(fmtUsd(2525.69, 100), "$25.3"); // ≥1 <100 → 一位小数
+  assert.equal(fmtUsd(39200, 100), "$392"); // ≥100 → 取整
+  assert.equal(fmtUsd(140000, 100), "$1.4k"); // ≥1000 → k
+  assert.equal(fmtUsd(50, 100), "$0.50"); // <1 → 两位小数
+  assert.equal(fmtUsd(1000, 0), "$10.0"); // rate<=0 回落 100
 });
 
-test("deriveWindow 带原始额度 amountText", () => {
+test("deriveWindow 保留原始额度 used/budget", () => {
   const w = deriveWindow({ name: "7d", used: 32700, budget: 74600, reset_at: 1_500_000 }, 1_000_000);
   assert.equal(w.used, 32700);
   assert.equal(w.budget, 74600);
-  assert.equal(w.amountText, "32.7k / 74.6k");
 });
 
 test("limitsMatchAccount：subject 归属判定（切号后过滤旧账号用量）", () => {

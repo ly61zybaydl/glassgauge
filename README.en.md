@@ -24,8 +24,9 @@ CLI (see `cli/`).
 - Auto-discovers the local mirasim relay (the port is assigned dynamically — it scans
   and claims by response shape) and polls `GET /v1/limits`.
 - Always-expanded panel with three window cards (5 hours / 7 days / 30 days), each
-  showing used %, the raw used/budget amounts (v0.8.0, k-abbreviated, same as mirasim's
-  own panel), an even-pace tick, ahead/behind, and a reset countdown.
+  showing used %, the **estimated API cost used/total** (v0.9.0, shown in `$`; credits are
+  converted via `creditsPerUsd`, default 100 credits = $1 — an unofficial estimate), an
+  even-pace tick, ahead/behind, and a reset countdown.
 - **Subscription-account switching** (v0.2.0): open the "account" row in the panel to
   list saved snapshots, then click one to switch the logged-in mirasim account — no
   re-entering an email code. Perfect for hopping to a spare account when a quota runs
@@ -123,6 +124,7 @@ tray's "refresh now":
   "planLabel": "MAX",         // badge text (fallback only, when the plan can't be read from the token)
   "validUntil": "2027-08-11", // plan-expiry fallback (normally taken from the token's plan_exp)
   "refreshSeconds": 60,
+  "creditsPerUsd": 100,       // credits -> estimated API cost: how many credits = $1 (unofficial estimate)
   "alwaysOnTop": true,
   "glass": {
     "alpha": 0.03,            // veil density (0 = pure glass)

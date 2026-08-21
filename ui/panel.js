@@ -1,6 +1,6 @@
 // 渲染与数据环。派生计算全部来自 derive.js；本文件只做取数节奏和 DOM。
 import { accountItems, currentLabel, esc, planBadge, planExpiry } from "./accounts-view.js";
-import { deriveAll, limitsMatchAccount } from "./derive.js";
+import { deriveAll, limitsMatchAccount, fmtUsd } from "./derive.js";
 import { initGlass, recropTo, reloadWallpaper, teardownGlass } from "./glass.js";
 import { applyWallpaperTheme } from "./theme.js";
 
@@ -172,6 +172,8 @@ function expandedHtml(all, connected, syncing) {
     : syncing
       ? "正在同步新账号用量…"
       : "加载中…";
+  // 额度按 creditsPerUsd 折算成估算 API 费用（默认 100 credits = $1）
+  const rate = config?.creditsPerUsd ?? 100;
   const cards = all
     ? all.windows
         .map(
@@ -179,7 +181,7 @@ function expandedHtml(all, connected, syncing) {
       <div class="card">
         <div class="r1">
           <span class="win">${w.label}</span>
-          <span class="rem">${w.amountText}</span>
+          <span class="rem">${fmtUsd(w.used, rate)} / ${fmtUsd(w.budget, rate)}</span>
           <span class="pct2">${w.usedPct}%</span>
         </div>
         <div class="bar">

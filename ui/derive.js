@@ -22,15 +22,21 @@ export function deriveWindow(w, now) {
     resetText: resetText(remaining),
     used: w.used,
     budget: w.budget,
-    // 原始额度数（已用 / 总额），大额缩写为 k，与 mirasim 自带面板一致
-    amountText: `${fmtAmount(w.used)} / ${fmtAmount(w.budget)}`,
   };
 }
 
-/** 额度数缩写：<1000 取整；≥1000 用一位小数 k（26100 → "26.1k"，878 → "878"）。 */
-export function fmtAmount(n) {
-  if (!(n >= 0)) return "0";
-  return n < 1000 ? String(Math.round(n)) : (n / 1000).toFixed(1) + "k";
+/** 额度 → 估算 API 费用（美元）。perUsd = 多少 credits 折合 $1（默认 100）。
+ *  ≥1000 用 k、≥100 取整、≥1 一位小数、否则两位小数，前缀 $。
+ *  注意：费率是估算（非 mirasim 官方口径），仅供参考。 */
+export function fmtUsd(credits, perUsd) {
+  const rate = perUsd > 0 ? perUsd : 100;
+  const usd = (Number(credits) || 0) / rate;
+  let s;
+  if (usd >= 1000) s = (usd / 1000).toFixed(1) + "k";
+  else if (usd >= 100) s = String(Math.round(usd));
+  else if (usd >= 1) s = usd.toFixed(1);
+  else s = usd.toFixed(2);
+  return "$" + s;
 }
 
 /** 全响应 -> {status, windows[], tight}。窗口按 5h/7d/30d 固定排序。 */
