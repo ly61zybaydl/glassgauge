@@ -243,3 +243,22 @@ html, body {
   background: var(--tick);
 }
 .stale { opacity: 0.55; }
+
+/* 实底模式（白纱 ≥ 50%，面板接近/纯白）：文字与刻度转深色、卡片/子面板改用淡黑分层，
+   否则深色壁纸取的白字会压在白底上看不见。由 JS 按 alpha 在 <html> 上挂 .solid 切换。 */
+.solid .shell { color: #171a22; }
+.solid .card {
+  background: rgba(0, 0, 0, 0.035);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.06);
+}
+.solid .acct,
+.solid .set {
+  background: rgba(0, 0, 0, 0.035);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.05);
+}
+.solid .acct-row:hover,
+.solid .acct-item:hover { background: rgba(0, 0, 0, 0.05); }
+.solid .acct-list { border-top-color: rgba(0, 0, 0, 0.1); }
+.solid .bar { background: rgba(0, 0, 0, 0.1); }
+.solid .tick { background: rgba(0, 0, 0, 0.5); }
+.solid .set input[type="range"] { background: rgba(0, 0, 0, 0.1); }

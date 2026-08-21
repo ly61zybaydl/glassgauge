@@ -15,6 +15,7 @@ let backoffMs = 0; // 0 = 正常节奏；失败后 5s→30s
 let lastConnected = true;
 let expanded = false; // 悬停展开态（spec 形态 C）
 let fastUntil = 0; // 切号后允许快轮询到此时刻（等 relay 的 /v1/limits 追上新账号）
+let lastTickAt = 0; // 上次进入 tick 的时刻（看门狗判活）
 
 // 玻璃设置（⚙ 弹出行）：白纱 alpha 即时生效（CSS 变量），磨砂 blur 防抖后
 // 经 set_glass 持久化并热更引擎/壁纸滤镜
@@ -42,6 +43,13 @@ function applyRadius() {
   );
 }
 
+// 白纱够浓（面板接近纯白）时切到"实底"配色：文字/刻度转深色，卡片加淡描边，
+// 否则深色壁纸下会白字压白底看不清。挂 root 上，拖动滑杆即时生效、跨重渲染保留。
+function applySolid() {
+  const a = config?.glass?.alpha ?? 0.03;
+  document.documentElement.classList.toggle("solid", a >= 0.5);
+}
+
 async function loadConfig() {
   config = JSON.parse(await invoke("get_config"));
   const g = config.glass ?? {};
@@ -49,45 +57,57 @@ async function loadConfig() {
   if (g.alpha != null) root.setProperty("--alpha", g.alpha);
   if (g.radiusCard != null) root.setProperty("--radius-card", g.radiusCard + "px");
   applyRadius();
+  applySolid();
 }
 
-/* ---------- 取数节奏：正常 refreshSeconds 轮询；失败 5s→30s 退避 ---------- */
+/* ---------- 取数节奏：正常 refreshSeconds 轮询；失败快重试（≤5s）------------
+   整个函数体包在 try/finally 里：无论取数/渲染是否抛错，finally 永远重排下一次 tick，
+   保证轮询链不会因一次异常而停摆（否则开机时序等边角会让挂件永久卡在"不可用"）。 */
 async function tick() {
   clearTimeout(timer);
+  lastTickAt = Date.now();
   let ok = false;
   try {
-    const res = await invoke("fetch_limits");
-    lastGood = { json: JSON.parse(res.json), at: Date.now() };
-    ok = true;
-  } catch {
-    /* relay-not-found 或网络失败 → 降级渲染 */
-  }
-  try {
-    accounts = await invoke("accounts_list"); // 本地文件读，与 relay 独立
-  } catch {
-    /* setting.json 缺失/损坏 → 沿用上次视图（可能为 null，不画账号行） */
-  }
-  lastConnected = ok;
-  render(ok);
-  // expand:"always"（默认）= 常驻展开：首次取数后即展开定形——
-  // 即便 relay 没找到也展开，账号切换要在这种时候可用
-  if ((config?.expand ?? "always") === "always" && !expanded) {
-    setExpanded(true);
-  }
-  if (ok) {
-    backoffMs = 0;
-    // 切号后 relay 的 limits 还属于旧账号 → 快轮询（3s）直到 subject 追上或超时；
-    // 否则正常 refreshSeconds 节奏
-    if (limitsSyncing() && Date.now() < fastUntil) {
-      timer = setTimeout(tick, 3000);
-    } else {
-      timer = setTimeout(tick, (config?.refreshSeconds ?? 60) * 1000);
+    try {
+      const res = await invoke("fetch_limits");
+      lastGood = { json: JSON.parse(res.json), at: Date.now() };
+      ok = true;
+    } catch {
+      /* relay-not-found 或网络失败 → 降级渲染 */
     }
-  } else {
-    backoffMs = backoffMs ? Math.min(backoffMs * 2, 30000) : 5000;
-    timer = setTimeout(tick, backoffMs);
+    try {
+      accounts = await invoke("accounts_list"); // 本地文件读，与 relay 独立
+    } catch {
+      /* setting.json 缺失/损坏 → 沿用上次视图（可能为 null，不画账号行） */
+    }
+    lastConnected = ok;
+    render(ok);
+    // expand:"always"（默认）= 常驻展开：首次取数后即展开定形——
+    // 即便 relay 没找到也展开，账号切换要在这种时候可用
+    if ((config?.expand ?? "always") === "always" && !expanded) {
+      setExpanded(true);
+    }
+  } catch (e) {
+    console.error("tick error:", e);
+  } finally {
+    let delay;
+    if (ok) {
+      backoffMs = 0;
+      // 切号后 relay 的 limits 还属于旧账号 → 快轮询（3s）直到 subject 追上或超时
+      delay = limitsSyncing() && Date.now() < fastUntil ? 3000 : (config?.refreshSeconds ?? 60) * 1000;
+    } else {
+      // 等 mirasim relay（开机/重启时序）→ 快重试，最多 5s，好让它一起来就秒级恢复
+      backoffMs = backoffMs ? Math.min(backoffMs * 2, 5000) : 2000;
+      delay = backoffMs;
+    }
+    timer = setTimeout(tick, delay);
   }
 }
+
+// 看门狗：万一定时器链意外中断（未捕获异常等），兜底把 tick 重新拉起来
+setInterval(() => {
+  if (Date.now() - lastTickAt > 90000) tick();
+}, 30000);
 
 /* 只认属于当前账号的用量：切号后 relay 的 /v1/limits 会有个把秒仍报旧账号，
    subject≠当前 userId 期间把旧数据视作"暂无"，避免显示上一个账号的用量。 */
@@ -116,7 +136,7 @@ function render(connected) {
   if (!limits) {
     app.innerHTML = shellHtml({
       dot: "grey",
-      who: !connected ? "未找到 mirasim" : syncing ? "同步新账号用量…" : "加载中…",
+      who: !connected ? "等待 Mirasim 启动…" : syncing ? "同步新账号用量…" : "加载中…",
       pct: "–",
       fill: 0,
       tickAt: 0,
@@ -148,7 +168,7 @@ function expandedHtml(all, connected, syncing) {
   const dot = connected ? (all?.status.dot ?? "grey") : "grey";
   const dotCls = dot === "accent" ? "dot" : `dot ${dot}`;
   const emptyMsg = !connected
-    ? "未找到 mirasim · 数据不可用"
+    ? "等待 Mirasim 启动 · 自动重连中…"
     : syncing
       ? "正在同步新账号用量…"
       : "加载中…";
@@ -206,11 +226,11 @@ function setHtml() {
     <div class="set" data-gg-interactive>
       <div class="set-row">
         <span class="set-k">白纱</span>
-        <input type="range" min="0" max="0.3" step="0.005" value="${alpha}" data-set-glass="alpha">
-        <span class="set-v">${Math.round((alpha / 0.3) * 100)}%</span>
+        <input type="range" min="0" max="1" step="0.02" value="${alpha}" data-set-glass="alpha">
+        <span class="set-v">${Math.round(alpha * 100)}%</span>
       </div>
       ${blurRow}
-      <div class="set-hint">白纱 0% = 纯玻璃全透 · 拖动即时生效并记住</div>
+      <div class="set-hint">白纱 0% = 纯玻璃全透，100% = 纯白面板 · 拖动即时生效并记住</div>
     </div>`;
 }
 
@@ -222,8 +242,9 @@ function onGlassInput(input) {
   // 白纱即时走 CSS 变量；数值角标就地改，不整树重渲染（拖动中会打断滑杆）
   if (key === "alpha") {
     document.documentElement.style.setProperty("--alpha", val);
+    applySolid();
     const v = input.parentElement.querySelector(".set-v");
-    if (v) v.textContent = Math.round((val / 0.3) * 100) + "%";
+    if (v) v.textContent = Math.round(val * 100) + "%";
   } else {
     const v = input.parentElement.querySelector(".set-v");
     if (v) v.textContent = String(val);

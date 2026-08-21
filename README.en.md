@@ -34,7 +34,13 @@ CLI (see `cli/`).
   where 0 = pure clear glass) and frost (blur σ). Dragging applies instantly and is
   written back to `config.json` — in `refract` mode via the engine's `SetCfg` hot
   reload, in `wallpaper` mode by rebuilding the CSS filter; `live` mode's blur is fixed
-  by DWM, so only the veil is offered there.
+  by DWM, so only the veil is offered there. The veil can go all the way to **100% = a
+  solid white panel** (v0.7.0; at veil ≥ 50% the text/ticks switch to dark and cards get a
+  faint dark tint, so it stays readable over a dark wallpaper).
+- **Self-heals on boot** (v0.7.0): the widget usually starts on login and may come up
+  before mirasim, so it shows "waiting for Mirasim…" and retries briskly (≤5s), recovering
+  within seconds once the relay is ready. The poll loop is wrapped in try/finally plus a
+  watchdog, so no exception can ever leave it stuck on "unavailable".
 - Free dragging, multi-monitor aware (including mixed DPI scaling), remembers its
   position, and degrades to the last-known data when the relay drops.
 
