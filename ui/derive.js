@@ -39,6 +39,12 @@ export function fmtUsd(credits, perUsd) {
   return "$" + s;
 }
 
+/** credits 原值缩写：<1000 取整；≥1000 用一位小数 k（39200 → "39.2k"，878 → "878"）。 */
+export function fmtAmount(n) {
+  const v = Number(n) || 0;
+  return v < 1000 ? String(Math.round(v)) : (v / 1000).toFixed(1) + "k";
+}
+
 /** 全响应 -> {status, windows[], tight}。窗口按 5h/7d/30d 固定排序。 */
 export function deriveAll(limits, now) {
   const order = ["5h", "7d", "30d"];

@@ -24,9 +24,10 @@ CLI (see `cli/`).
 - Auto-discovers the local mirasim relay (the port is assigned dynamically — it scans
   and claims by response shape) and polls `GET /v1/limits`.
 - Always-expanded panel with three window cards (5 hours / 7 days / 30 days), each
-  showing used %, the **estimated API cost used/total** (v0.9.0, shown in `$`; credits are
-  converted via `creditsPerUsd`, default 100 credits = $1 — an unofficial estimate), an
-  even-pace tick, ahead/behind, and a reset countdown.
+  showing used %, the **raw credits and the estimated API cost side by side** (v0.10.0,
+  e.g. `441 / 39.2k · ≈ $4.4 / $392`; cost is converted via `creditsPerUsd`, default
+  100 credits = $1 — an unofficial estimate), an even-pace tick, ahead/behind, and a
+  reset countdown.
 - **Subscription-account switching** (v0.2.0): open the "account" row in the panel to
   list saved snapshots, then click one to switch the logged-in mirasim account — no
   re-entering an email code. Perfect for hopping to a spare account when a quota runs

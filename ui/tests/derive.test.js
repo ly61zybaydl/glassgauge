@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { deriveWindow, deriveAll, deriveStatus, resetText, tightest, limitsMatchAccount, fmtUsd } from "../derive.js";
+import { deriveWindow, deriveAll, deriveStatus, resetText, tightest, limitsMatchAccount, fmtUsd, fmtAmount } from "../derive.js";
 
 const fixture = JSON.parse(
   new TextDecoder().decode(readFileSync(new URL("./fixtures/limits.json", import.meta.url))),
@@ -13,6 +13,13 @@ test("fmtUsd：额度 → 估算美元（默认 100 credits = $1）", () => {
   assert.equal(fmtUsd(140000, 100), "$1.4k"); // ≥1000 → k
   assert.equal(fmtUsd(50, 100), "$0.50"); // <1 → 两位小数
   assert.equal(fmtUsd(1000, 0), "$10.0"); // rate<=0 回落 100
+});
+
+test("fmtAmount：credits 原值缩写", () => {
+  assert.equal(fmtAmount(878), "878");
+  assert.equal(fmtAmount(39200), "39.2k");
+  assert.equal(fmtAmount(2970), "3.0k");
+  assert.equal(fmtAmount(0), "0");
 });
 
 test("deriveWindow 保留原始额度 used/budget", () => {
