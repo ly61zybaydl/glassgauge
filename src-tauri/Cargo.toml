@@ -1,6 +1,6 @@
 [package]
 name = "glassgauge"
-version = "0.7.0"
+version = "0.8.0"
 description = "Liquid-glass usage widget for the mirasim relay"
 edition = "2021"
 

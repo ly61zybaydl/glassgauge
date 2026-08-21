@@ -24,8 +24,8 @@ CLI (see `cli/`).
 - Auto-discovers the local mirasim relay (the port is assigned dynamically — it scans
   and claims by response shape) and polls `GET /v1/limits`.
 - Always-expanded panel with three window cards (5 hours / 7 days / 30 days), each
-  showing used %, remaining, an even-pace tick, ahead/behind, and a reset countdown
-  (percentages only — never a dollar amount).
+  showing used %, the raw used/budget amounts (v0.8.0, k-abbreviated, same as mirasim's
+  own panel), an even-pace tick, ahead/behind, and a reset countdown.
 - **Subscription-account switching** (v0.2.0): open the "account" row in the panel to
   list saved snapshots, then click one to switch the logged-in mirasim account — no
   re-entering an email code. Perfect for hopping to a spare account when a quota runs

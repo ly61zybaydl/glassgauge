@@ -179,7 +179,7 @@ function expandedHtml(all, connected, syncing) {
       <div class="card">
         <div class="r1">
           <span class="win">${w.label}</span>
-          <span class="rem">剩余 ${w.remPct}%</span>
+          <span class="rem">${w.amountText}</span>
           <span class="pct2">${w.usedPct}%</span>
         </div>
         <div class="bar">

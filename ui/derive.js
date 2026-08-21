@@ -20,7 +20,17 @@ export function deriveWindow(w, now) {
     delta: round1(delta),
     deltaText: `匀速线 ${round1(pacePct)}% · ${delta >= 0 ? "超前" : "落后"} ${Math.abs(round1(delta))}%`,
     resetText: resetText(remaining),
+    used: w.used,
+    budget: w.budget,
+    // 原始额度数（已用 / 总额），大额缩写为 k，与 mirasim 自带面板一致
+    amountText: `${fmtAmount(w.used)} / ${fmtAmount(w.budget)}`,
   };
+}
+
+/** 额度数缩写：<1000 取整；≥1000 用一位小数 k（26100 → "26.1k"，878 → "878"）。 */
+export function fmtAmount(n) {
+  if (!(n >= 0)) return "0";
+  return n < 1000 ? String(Math.round(n)) : (n / 1000).toFixed(1) + "k";
 }
 
 /** 全响应 -> {status, windows[], tight}。窗口按 5h/7d/30d 固定排序。 */
