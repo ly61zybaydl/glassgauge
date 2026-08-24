@@ -7,12 +7,13 @@ const fixture = JSON.parse(
   new TextDecoder().decode(readFileSync(new URL("./fixtures/limits.json", import.meta.url))),
 );
 
-test("fmtUsd：额度 → 估算美元（默认 100 credits = $1）", () => {
-  assert.equal(fmtUsd(2525.69, 100), "$25.3"); // ≥1 <100 → 一位小数
-  assert.equal(fmtUsd(39200, 100), "$392"); // ≥100 → 取整
-  assert.equal(fmtUsd(140000, 100), "$1.4k"); // ≥1000 → k
-  assert.equal(fmtUsd(50, 100), "$0.50"); // <1 → 两位小数
-  assert.equal(fmtUsd(1000, 0), "$10.0"); // rate<=0 回落 100
+test("fmtUsd：units → 估算美元（普通 200 units=$1，Fable 480）", () => {
+  assert.equal(fmtUsd(156800, 200), "$784"); // 普通：156800/200
+  assert.equal(fmtUsd(560000, 200), "$2,800"); // ≥1000 千分位
+  assert.equal(fmtUsd(296800, 480), "$618"); // Fable 费率 200×2.4
+  assert.equal(fmtUsd(50, 200), "$0.25"); // <1 → 两位小数
+  assert.equal(fmtUsd(400, 200), "$2.0"); // ≥1 <100 → 一位小数
+  assert.equal(fmtUsd(400, 0), "$2.0"); // rate<=0 回落 200
 });
 
 test("fmtAmount：credits 原值缩写", () => {

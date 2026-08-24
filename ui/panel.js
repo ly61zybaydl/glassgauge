@@ -172,12 +172,15 @@ function expandedHtml(all, connected, syncing) {
     : syncing
       ? "正在同步新账号用量…"
       : "加载中…";
-  // 额度按 creditsPerUsd 折算成估算 API 费用（默认 100 credits = $1）
-  const rate = config?.creditsPerUsd ?? 100;
+  // 费用折算：普通窗口 unitsPerUsd（默认 200 units=$1），Fable 窗口贵 fableMultiplier
+  // （默认 2.4）倍 → 480 units=$1。名字含 fable 的窗口按 Fable 单价。
+  const base = config?.unitsPerUsd ?? 200;
+  const fableMult = config?.fableMultiplier ?? 2.4;
   const cards = all
     ? all.windows
-        .map(
-          (w) => `
+        .map((w) => {
+          const rate = /fable/i.test(w.name) ? base * fableMult : base;
+          return `
       <div class="card">
         <div class="r1">
           <span class="win">${w.label}</span>
@@ -189,8 +192,8 @@ function expandedHtml(all, connected, syncing) {
           ${w.pacePct != null ? `<div class="tick" style="left:${w.pacePct}%"></div>` : ""}
         </div>
         <div class="l3"><span>${w.resetText}</span><span class="d">${w.deltaText ?? ""}</span></div>
-      </div>`,
-        )
+      </div>`;
+        })
         .join("")
     : `<div class="card empty">${emptyMsg}</div>`;
   return `

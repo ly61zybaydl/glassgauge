@@ -26,8 +26,9 @@ CLI (see `cli/`).
 - Always-expanded panel that **shows every usage window the relay returns** (v0.11.0 —
   5h/7d/30d plus new ones like `7d_fable`; each window's length is parsed from its name to
   draw the even-pace tick), each with used %, the **raw credits and the estimated API cost
-  side by side** (e.g. `441 / 39.2k · ≈ $4.4 / $392`; cost via `creditsPerUsd`, default
-  100 credits = $1 — an unofficial estimate), ahead/behind, and a reset countdown.
+  side by side** (e.g. `808 / 156.8k · ≈ $4 / $784`; normal windows use `unitsPerUsd`,
+  default 200 units = $1, while Fable windows cost `fableMultiplier`× more — default 2.4,
+  i.e. 480 units = $1 — an unofficial estimate), ahead/behind, and a reset countdown.
 - **Subscription-account switching** (v0.2.0): open the "account" row in the panel to
   list saved snapshots, then click one to switch the logged-in mirasim account — no
   re-entering an email code. Perfect for hopping to a spare account when a quota runs

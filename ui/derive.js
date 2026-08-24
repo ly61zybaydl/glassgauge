@@ -51,15 +51,14 @@ export function deriveWindow(w, now) {
   };
 }
 
-/** 额度 → 估算 API 费用（美元）。perUsd = 多少 credits 折合 $1（默认 100）。
- *  ≥1000 用 k、≥100 取整、≥1 一位小数、否则两位小数，前缀 $。
- *  注意：费率是估算（非 mirasim 官方口径），仅供参考。 */
-export function fmtUsd(credits, perUsd) {
-  const rate = perUsd > 0 ? perUsd : 100;
-  const usd = (Number(credits) || 0) / rate;
+/** units → 估算 API 费用（美元）。rate = 多少 units 折合 $1
+ *  （普通模型 200；Fable 窗口 ×2.4 = 480）。
+ *  ≥100 取整并加千分位、≥1 一位小数、否则两位小数，前缀 $。费率为估算,非官方。 */
+export function fmtUsd(units, rate) {
+  const r = rate > 0 ? rate : 200;
+  const usd = (Number(units) || 0) / r;
   let s;
-  if (usd >= 1000) s = (usd / 1000).toFixed(1) + "k";
-  else if (usd >= 100) s = String(Math.round(usd));
+  if (usd >= 100) s = Math.round(usd).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
   else if (usd >= 1) s = usd.toFixed(1);
   else s = usd.toFixed(2);
   return "$" + s;
