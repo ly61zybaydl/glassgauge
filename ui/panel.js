@@ -157,7 +157,7 @@ function render(connected) {
         : "连接丢失 · 显示最后数据",
     pct: t ? t.usedPct + "%" : "–",
     fill: t ? t.usedPct : 0,
-    tickAt: t ? t.pacePct : 0,
+    tickAt: t && t.pacePct != null ? t.pacePct : 0,
     stale: !connected,
   });
   markDragRegion();
@@ -186,9 +186,9 @@ function expandedHtml(all, connected, syncing) {
         <div class="amt">${fmtAmount(w.used)} / ${fmtAmount(w.budget)} · ≈ ${fmtUsd(w.used, rate)} / ${fmtUsd(w.budget, rate)}</div>
         <div class="bar">
           <div class="fill" style="width:${w.usedPct}%"></div>
-          <div class="tick" style="left:${w.pacePct}%"></div>
+          ${w.pacePct != null ? `<div class="tick" style="left:${w.pacePct}%"></div>` : ""}
         </div>
-        <div class="l3"><span>${w.resetText}</span><span class="d">${w.deltaText}</span></div>
+        <div class="l3"><span>${w.resetText}</span><span class="d">${w.deltaText ?? ""}</span></div>
       </div>`,
         )
         .join("")

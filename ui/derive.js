@@ -2,23 +2,49 @@
 
 export const WINDOW_LEN = { "5h": 18000, "7d": 604800, "30d": 2592000 };
 export const WINDOW_LABEL = { "5h": "5 小时窗口", "7d": "7 天窗口", "30d": "30 天窗口" };
+const UNIT_SEC = { m: 60, h: 3600, d: 86400, w: 604800 };
+const UNIT_ZH = { m: "分钟", h: "小时", d: "天", w: "周" };
 
-/** 单个窗口 -> 显示值。now 为 Unix 秒。 */
+/** 窗口时长（秒）：先查已知表，否则从名字前缀解析（"7d_fable" → 7 天）；解析不出返回 null。 */
+export function windowLenSeconds(name) {
+  if (WINDOW_LEN[name]) return WINDOW_LEN[name];
+  const m = /^(\d+)\s*([mhdw])/i.exec(String(name));
+  const unit = m && UNIT_SEC[m[2].toLowerCase()];
+  return unit ? Number(m[1]) * unit : null;
+}
+
+/** 窗口显示名：已知用中文表，否则从名字解析（"7d_fable" → "7 天窗口 · fable"）。 */
+export function windowLabel(name) {
+  if (WINDOW_LABEL[name]) return WINDOW_LABEL[name];
+  const m = /^(\d+)\s*([mhdw])(?:[_-](.+))?$/i.exec(String(name));
+  if (!m) return String(name);
+  const unit = UNIT_ZH[m[2].toLowerCase()] ?? m[2];
+  return `${m[1]} ${unit}窗口${m[3] ? " · " + m[3] : ""}`;
+}
+
+/** 单个窗口 -> 显示值。now 为 Unix 秒。任意窗口名都保留；只有能算出时长时才给匀速线。 */
 export function deriveWindow(w, now) {
-  const len = WINDOW_LEN[w.name];
-  if (!len || !(w.budget > 0)) return null;
+  if (!(w.budget > 0)) return null;
+  const len = windowLenSeconds(w.name);
   const usedPct = (w.used / w.budget) * 100;
   const remaining = Math.max(0, w.reset_at - now);
-  const pacePct = Math.min(100, Math.max(0, ((len - remaining) / len) * 100));
-  const delta = usedPct - pacePct;
+  let pacePct = null;
+  let delta = null;
+  let deltaText = null;
+  if (len) {
+    pacePct = round1(Math.min(100, Math.max(0, ((len - remaining) / len) * 100)));
+    delta = round1(usedPct - pacePct);
+    deltaText = `匀速线 ${pacePct}% · ${delta >= 0 ? "超前" : "落后"} ${Math.abs(delta)}%`;
+  }
   return {
     name: w.name,
-    label: WINDOW_LABEL[w.name] ?? w.name,
+    label: windowLabel(w.name),
+    lenSec: len,
     usedPct: round1(usedPct),
     remPct: Math.max(0, Math.round(100 - usedPct)),
-    pacePct: round1(pacePct),
-    delta: round1(delta),
-    deltaText: `匀速线 ${round1(pacePct)}% · ${delta >= 0 ? "超前" : "落后"} ${Math.abs(round1(delta))}%`,
+    pacePct,
+    delta,
+    deltaText,
     resetText: resetText(remaining),
     used: w.used,
     budget: w.budget,
@@ -45,13 +71,13 @@ export function fmtAmount(n) {
   return v < 1000 ? String(Math.round(v)) : (v / 1000).toFixed(1) + "k";
 }
 
-/** 全响应 -> {status, windows[], tight}。窗口按 5h/7d/30d 固定排序。 */
+/** 全响应 -> {status, windows[], tight}。显示 relay 返回的所有窗口，按时长升序
+   （短窗在前：5h < 7d = 7d_fable < 30d），同长按名字；未知时长排最后。 */
 export function deriveAll(limits, now) {
-  const order = ["5h", "7d", "30d"];
   const windows = (limits.windows ?? [])
     .map((w) => deriveWindow(w, now))
     .filter(Boolean)
-    .sort((a, b) => order.indexOf(a.name) - order.indexOf(b.name));
+    .sort((a, b) => (a.lenSec ?? Infinity) - (b.lenSec ?? Infinity) || a.name.localeCompare(b.name));
   return {
     status: deriveStatus(limits),
     windows,

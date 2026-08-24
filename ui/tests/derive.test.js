@@ -28,6 +28,35 @@ test("deriveWindow 保留原始额度 used/budget", () => {
   assert.equal(w.budget, 74600);
 });
 
+test("deriveAll 显示 relay 返回的所有窗口（含未预置的 7d_fable）", () => {
+  const now = 1_000_000;
+  const all = deriveAll(
+    {
+      windows: [
+        { name: "7d_fable", used: 3167, budget: 74200, reset_at: now + 600000 },
+        { name: "5h", used: 100, budget: 1000, reset_at: now + 3600 },
+        { name: "7d", used: 700, budget: 1000, reset_at: now + 600000 },
+      ],
+    },
+    now,
+  );
+  // 全部保留，按时长升序（5h < 7d = 7d_fable，同长按名字）
+  assert.deepEqual(all.windows.map((w) => w.name), ["5h", "7d", "7d_fable"]);
+  const fable = all.windows.find((w) => w.name === "7d_fable");
+  assert.equal(fable.label, "7 天窗口 · fable");
+  assert.equal(fable.budget, 74200);
+  assert.ok(fable.pacePct != null, "7d 时长可从名字解析 → 有匀速线");
+});
+
+test("deriveWindow 未知窗口名也显示，但无匀速线", () => {
+  const w = deriveWindow({ name: "weird", used: 50, budget: 100, reset_at: 2_000_000 }, 1_000_000);
+  assert.ok(w);
+  assert.equal(w.usedPct, 50);
+  assert.equal(w.label, "weird");
+  assert.equal(w.pacePct, null);
+  assert.equal(w.deltaText, null);
+});
+
 test("limitsMatchAccount：subject 归属判定（切号后过滤旧账号用量）", () => {
   // subject 与当前 userId 一致 → 属于当前账号
   assert.equal(limitsMatchAccount({ subject: "usr_a", windows: [] }, "usr_a"), true);
@@ -98,11 +127,12 @@ test("状态优先级：suspended > degraded > unmetered", () => {
   assert.equal(deriveStatus({}).kind, "ok");
 });
 
-test("坏数据不炸：budget<=0 / 未知窗口名被丢弃", () => {
+test("坏数据不炸：budget<=0 丢弃；无法解析时长的窗口名保留（无匀速线）", () => {
   const all = deriveAll(
     { windows: [{ name: "5h", used: 1, budget: 0, reset_at: 10 }, { name: "1y", used: 1, budget: 5, reset_at: 10 }] },
     0,
   );
-  assert.equal(all.windows.length, 0);
-  assert.equal(all.tight, null);
+  assert.equal(all.windows.length, 1); // budget<=0 的 5h 丢弃；"1y" 保留
+  assert.equal(all.windows[0].name, "1y");
+  assert.equal(all.windows[0].pacePct, null); // "y" 非 m/h/d/w → 解析不出时长 → 无匀速线
 });
