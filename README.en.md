@@ -73,7 +73,10 @@ layout (`~/.mirasim/_account_switcher/{profiles,backups}`) and can be used inter
   decrypts the token → read the JWT. Everything is local and offline; the ciphertext never
   leaves the process. If it can't be decrypted (a snapshot from another machine, or the key
   is unreadable) it falls back to the account's display name. New snapshots default to being
-  named after the email's local part.
+  named after the email's local part; auto-derived names that collide are disambiguated
+  instead of erroring (v0.13.0: when two accounts share the same email local part and differ
+  only in domain, the second gets the domain appended — `sam` / `sam-outlook`; only a
+  name you typed yourself still errors when it's taken by another account).
 - **The plan badge and expiry follow the account** (v0.5.0): the header's plan badge and
   "plan expiry" come from the same JWT's `plan` / `plan_exp` claims, so they refresh the
   moment you switch accounts. They fall back to `planLabel` / `validUntil` in the config
