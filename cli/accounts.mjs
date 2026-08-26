@@ -245,11 +245,23 @@ function cmdSave(nameArg) {
   const profiles = listProfiles();
   const sameUser = profiles.find((p) => p.userId === auth.userId);
 
-  let name = sanitizeName(nameArg);
-  if (!name) name = sameUser?.name || sanitizeName(auth.name) || 'usr-' + shortId(auth.userId);
+  const taken = (n) => profiles.find((p) => p.name === n && p.userId !== auth.userId);
 
-  const clash = profiles.find((p) => p.name === name && p.userId !== auth.userId);
-  if (clash) fail(`快照名「${name}」已被另一个账号（${clash.accountName} / ${shortId(clash.userId)}…）占用，换个名字。`);
+  let name = sanitizeName(nameArg);
+  if (name) {
+    // 用户显式命名：撞到别的账号才报错，请其换名
+    const clash = taken(name);
+    if (clash) fail(`快照名「${name}」已被另一个账号（${clash.accountName} / ${shortId(clash.userId)}…）占用，换个名字。`);
+  } else if (sameUser) {
+    name = sameUser.name; // 本账号已有快照：沿用原名（刷新）
+  } else {
+    // 自动命名：撞到别的账号（如同名账号）自动附短 userId 消歧，不报错
+    name = sanitizeName(auth.name) || 'usr-' + shortId(auth.userId);
+    if (taken(name)) {
+      name += '-' + shortId(auth.userId);
+      while (taken(name)) name += 'x';
+    }
+  }
 
   if (sameUser && sameUser.name !== name) {
     fs.rmSync(sameUser.file); // 同一账号改名保存：移除旧名，保持一账号一快照
