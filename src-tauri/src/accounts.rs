@@ -119,6 +119,44 @@ fn short_id(user_id: &str) -> String {
     user_id.trim_start_matches("usr_").chars().take(8).collect()
 }
 
+/// 自动命名去重：base 若被【别的账号】占用，先用邮箱域名首段消歧
+/// （sam@outlook.com 与 sam@gmail.com → sam / sam-outlook），
+/// 再不行附短 userId 兜底，保证唯一。本账号自己占用的名字视为可用（就是它）。
+fn unique_auto_name(
+    base: &str,
+    uid: &str,
+    email: Option<&str>,
+    profiles: &[(String, Value, std::path::PathBuf)],
+) -> String {
+    let taken = |n: &str| {
+        profiles
+            .iter()
+            .any(|(pn, v, _)| pn == n && v.get("userId").and_then(Value::as_str) != Some(uid))
+    };
+    if !taken(base) {
+        return base.to_string();
+    }
+    // 邮箱域名首段：sam@outlook.com → outlook
+    if let Some(dom) = email
+        .and_then(|e| e.split('@').nth(1))
+        .and_then(|d| d.split('.').next())
+    {
+        let dom = sanitize_name(dom);
+        if !dom.is_empty() {
+            let cand = format!("{base}-{dom}");
+            if !taken(&cand) {
+                return cand;
+            }
+        }
+    }
+    // 兜底：附短 userId；万一还撞（不同账号同短 id）就补字符
+    let mut cand = format!("{base}-{}", short_id(uid));
+    while taken(&cand) {
+        cand.push('x');
+    }
+    cand
+}
+
 /// setting-YYYYMMDD-HHMMSS（UTC）。手算 civil date，省掉时间库依赖。
 fn backup_stamp() -> String {
     let secs = SystemTime::now()
@@ -233,26 +271,29 @@ impl Store {
             return Ok(None);
         }
         let uid = auth.get("userId").and_then(Value::as_str).unwrap_or("");
-        if let Some((name, ..)) = self
-            .profiles()
-            .into_iter()
+        let profiles = self.profiles();
+        if let Some((name, ..)) = profiles
+            .iter()
             .find(|(_, v, _)| v.get("userId").and_then(Value::as_str) == Some(uid))
         {
+            let name = name.clone();
             self.write_profile(&name, &auth)?;
             return Ok(Some(name));
         }
-        // 默认名优先取邮箱本地部分（alice@… → alice），回退账号名，再回退 userId
-        let mut name = self
-            .email_of(&auth)
-            .map(|e| sanitize_name(crate::token::local_part(&e)))
+        // 默认名优先取邮箱本地部分（yi.liu@… → yi.liu），回退账号名，再回退 userId
+        let email = self.email_of(&auth);
+        let base = email
+            .as_deref()
+            .map(|e| sanitize_name(crate::token::local_part(e)))
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| sanitize_name(auth.get("name").and_then(Value::as_str).unwrap_or("")));
-        if name.is_empty() {
-            name = format!("usr-{}", short_id(uid));
-        }
-        while self.profile_path(&name).exists() {
-            name.push_str(&format!("-{}", &short_id(uid)[..4.min(short_id(uid).len())]));
-        }
+        let base = if base.is_empty() {
+            format!("usr-{}", short_id(uid))
+        } else {
+            base
+        };
+        // 撞到别的账号（同本地部分不同域名等）时自动消歧，不报错
+        let name = unique_auto_name(&base, uid, email.as_deref(), &profiles);
         self.write_profile(&name, &auth)?;
         Ok(Some(name))
     }
@@ -342,25 +383,33 @@ impl Store {
             .iter()
             .find(|(_, v, _)| v.get("userId").and_then(Value::as_str) == Some(uid.as_str()));
 
-        let mut name = sanitize_name(want.unwrap_or(""));
-        if name.is_empty() {
-            name = same_user
-                .map(|(n, ..)| n.clone())
-                .or_else(|| {
-                    self.email_of(&auth)
-                        .map(|e| sanitize_name(crate::token::local_part(&e)))
-                        .filter(|s| !s.is_empty())
-                })
-                .or_else(|| Some(sanitize_name(auth.get("name").and_then(Value::as_str)?)))
+        let email = self.email_of(&auth);
+        let explicit = sanitize_name(want.unwrap_or(""));
+        let name = if !explicit.is_empty() {
+            // 用户显式命名：撞到【别的账号】才报错，请其换名
+            if profiles
+                .iter()
+                .any(|(n, v, _)| n == &explicit && v.get("userId").and_then(Value::as_str) != Some(uid.as_str()))
+            {
+                return Err(format!("名字「{explicit}」已被另一个账号占用，换个名字"));
+            }
+            explicit
+        } else if let Some((n, ..)) = same_user {
+            // 本账号已有快照：沿用原名（刷新登录态）
+            n.clone()
+        } else {
+            // 自动命名：邮箱本地部分 / 账号名 / userId，撞到别的账号自动消歧（不报错）
+            let base = email
+                .as_deref()
+                .map(|e| sanitize_name(crate::token::local_part(e)))
                 .filter(|s| !s.is_empty())
+                .or_else(|| {
+                    let n = sanitize_name(auth.get("name").and_then(Value::as_str).unwrap_or(""));
+                    (!n.is_empty()).then_some(n)
+                })
                 .unwrap_or_else(|| format!("usr-{}", short_id(&uid)));
-        }
-        if profiles
-            .iter()
-            .any(|(n, v, _)| n == &name && v.get("userId").and_then(Value::as_str) != Some(uid.as_str()))
-        {
-            return Err(format!("名字「{name}」已被另一个账号占用"));
-        }
+            unique_auto_name(&base, &uid, email.as_deref(), &profiles)
+        };
         // 同账号改名：移除旧文件，保持一账号一快照
         if let Some((old, _, path)) = same_user {
             if old != &name {
@@ -463,7 +512,7 @@ mod tests {
             "auth": {"token": format!("mrs1:tok-{uid}"), "refreshToken": format!("mrs1:ref-{uid}"),
                       "userId": uid, "exp": 4_000_000_000i64, "name": name},
             "failover": {"enabled": true, "threshold": 0.95},
-            "workspaces": [{"path": "/x"}],
+            "workspaces": [{"path": "F:/x"}],
         });
         fs::write(store.setting_path(), serde_json::to_string_pretty(&setting).unwrap()).unwrap();
     }
@@ -492,11 +541,129 @@ mod tests {
 
     #[test]
     fn save_name_clash_with_other_user_rejected() {
+        // 显式命名撞到别的账号仍然报错（让用户改名）
         let s = temp_store("clash");
         seed(&s, "usr_a", "A");
         s.save(Some("同名")).unwrap();
         seed(&s, "usr_b", "B");
         assert!(s.save(Some("同名")).unwrap_err().contains("占用"));
+    }
+
+    #[test]
+    fn auto_save_disambiguates_instead_of_erroring() {
+        // 自动命名（点「保存当前登录为快照」，name=None）撞到别的账号时不报错，自动消歧。
+        // 复现：两账号邮箱本地部分相同、后缀不同 → 派生同一 base。测试环境无 secret.key，
+        // email 解不出，base 回退到账号名；用同名账号名即可复现同一冲突路径。
+        let s = temp_store("autodup");
+        seed(&s, "usr_aaaa1111", "Same Name");
+        let n1 = s.save(None).unwrap();
+        seed(&s, "usr_bbbb2222", "Same Name");
+        let n2 = s.save(None).unwrap(); // 不再报「占用」
+        assert_ne!(n1, n2, "两个不同账号的自动命名必须不同");
+        let v = s.view().unwrap();
+        assert_eq!(v.profiles.len(), 2, "两个账号都应保存下来");
+    }
+
+    /// 全链路复现用户 bug：两个账号邮箱本地部分相同、域名不同。
+    /// 沙箱里现造 DPAPI 保护的 secret.key + 真 mrs1 令牌（不碰任何真实凭证），
+    /// 走 email 解密 → 本地部分派生 → 域名消歧的完整路径。
+    #[cfg(windows)]
+    #[test]
+    fn auto_save_same_localpart_different_domain_end_to_end() {
+        use aes_gcm::aead::{Aead, KeyInit};
+        use aes_gcm::{Aes256Gcm, Nonce};
+        use base64::Engine;
+
+        fn dpapi_protect(data: &[u8]) -> Vec<u8> {
+            use windows::Win32::Foundation::{HLOCAL, LocalFree};
+            use windows::Win32::Security::Cryptography::{CryptProtectData, CRYPT_INTEGER_BLOB};
+            let mut input = CRYPT_INTEGER_BLOB {
+                cbData: data.len() as u32,
+                pbData: data.as_ptr() as *mut u8,
+            };
+            let mut out = CRYPT_INTEGER_BLOB::default();
+            unsafe {
+                CryptProtectData(&mut input, windows::core::PCWSTR::null(), None, None, None, 0, &mut out)
+                    .expect("CryptProtectData");
+                let v = std::slice::from_raw_parts(out.pbData, out.cbData as usize).to_vec();
+                let _ = LocalFree(Some(HLOCAL(out.pbData as *mut _)));
+                v
+            }
+        }
+
+        // secret.key = hex(DPAPI(UTF-16LE("64位十六进制主密钥")))，与 load_master_key 互逆
+        let key = [33u8; 32];
+        let key_hex: String = key.iter().map(|b| format!("{b:02x}")).collect();
+        let key_utf16: Vec<u8> = key_hex.encode_utf16().flat_map(u16::to_le_bytes).collect();
+        let blob = dpapi_protect(&key_utf16);
+        let blob_hex: String = blob.iter().map(|b| format!("{b:02x}")).collect();
+
+        let make_token = |jwt: &str| {
+            let cipher = Aes256Gcm::new_from_slice(&key).unwrap();
+            let iv = [7u8; 12];
+            let out = cipher.encrypt(Nonce::from_slice(&iv), jwt.as_bytes()).unwrap();
+            let (ct, tag) = out.split_at(out.len() - 16);
+            let mut buf = Vec::new();
+            buf.extend_from_slice(&iv);
+            buf.extend_from_slice(tag);
+            buf.extend_from_slice(ct);
+            format!("mrs1:{}", base64::engine::general_purpose::STANDARD.encode(buf))
+        };
+        let jwt_for = |uid: &str, email: &str| {
+            let b64 = |b: &[u8]| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b);
+            format!(
+                "{}.{}.sig",
+                b64(b"{\"alg\":\"HS256\"}"),
+                b64(format!("{{\"sub\":\"{uid}\",\"exp\":123,\"email\":\"{email}\"}}").as_bytes())
+            )
+        };
+        let seed_real = |s: &Store, uid: &str, email: &str| {
+            let setting = json!({
+                "auth": {"token": make_token(&jwt_for(uid, email)), "refreshToken": "mrs1:r",
+                          "userId": uid, "exp": 4_000_000_000i64, "name": "N"},
+            });
+            fs::write(s.setting_path(), serde_json::to_string_pretty(&setting).unwrap()).unwrap();
+        };
+
+        let s = temp_store("e2edom");
+        fs::write(s.home.join("secret.key"), &blob_hex).unwrap();
+
+        seed_real(&s, "usr_g1", "sam123@gmail.com");
+        assert_eq!(s.save(None).unwrap(), "sam123");
+        seed_real(&s, "usr_o2", "sam123@outlook.com");
+        assert_eq!(s.save(None).unwrap(), "sam123-outlook", "撞名自动附域名，而不是报「占用」");
+
+        let v = s.view().unwrap();
+        assert_eq!(v.profiles.len(), 2);
+        let emails: Vec<_> = v.profiles.iter().filter_map(|p| p.email.clone()).collect();
+        assert!(emails.contains(&"sam123@gmail.com".to_string()));
+        assert!(emails.contains(&"sam123@outlook.com".to_string()));
+    }
+
+    #[test]
+    fn unique_auto_name_domain_then_shortid() {
+        let profiles = vec![(
+            "sam123".to_string(),
+            json!({"userId": "usr_aaaa"}),
+            std::path::PathBuf::from("x"),
+        )];
+        // 名字空闲 → 原样
+        assert_eq!(unique_auto_name("fresh", "usr_bbbb", None, &profiles), "fresh");
+        // 被本账号自己占用 → 视为可用（就是它，刷新）
+        assert_eq!(
+            unique_auto_name("sam123", "usr_aaaa", Some("sam123@gmail.com"), &profiles),
+            "sam123"
+        );
+        // 被别的账号占用、本地部分相同后缀不同 → 用域名首段消歧
+        assert_eq!(
+            unique_auto_name("sam123", "usr_bbbb", Some("sam123@outlook.com"), &profiles),
+            "sam123-outlook"
+        );
+        // 被别的账号占用、拿不到邮箱 → 附短 userId 兜底
+        assert_eq!(
+            unique_auto_name("sam123", "usr_bbbb2222", None, &profiles),
+            "sam123-bbbb2222"
+        );
     }
 
     #[test]
@@ -565,7 +732,7 @@ mod tests {
 
     #[test]
     fn sanitize_names() {
-        assert_eq!(sanitize_name("Ada Lovelace"), "Ada-Lovelace");
+        assert_eq!(sanitize_name("Yi Liu"), "Yi-Liu");
         assert_eq!(sanitize_name("  主号!!"), "主号");
         assert_eq!(sanitize_name("a/b\\c"), "a-b-c");
         assert_eq!(sanitize_name("---"), "");
