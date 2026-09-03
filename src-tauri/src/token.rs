@@ -38,6 +38,18 @@ pub fn email_of(home: &Path, token: &str) -> Option<String> {
     account_of(home, token)?.email
 }
 
+/// 解出令牌内的访问 JWT 原文——它就是上游 relay 认的 Bearer 凭证。解不出为 None。
+/// 只在进程内用于向 relay.mirasim.ai 取额度，永不下发前端、不落盘。
+pub fn access_jwt(home: &Path, token: &str) -> Option<String> {
+    let key = master_key(home)?;
+    decrypt_token(token, &key)
+}
+
+/// JWT 的 `exp` claim（Unix 秒）。
+pub fn jwt_exp(jwt: &str) -> Option<i64> {
+    jwt_claims(jwt)?.get("exp")?.as_i64()
+}
+
 /// 主密钥单条缓存：DPAPI 解一次即可（secret.key 不在会话内轮换）。按 home 路径
 /// 记忆，换目录（测试/沙箱）自动重派生。所有令牌都用同一把机器密钥加密。
 fn master_key(home: &Path) -> Option<[u8; 32]> {
@@ -207,11 +219,11 @@ mod tests {
     #[test]
     fn decrypt_then_extract_email() {
         let key = [42u8; 32];
-        let jwt = jwt_with_email("alice@example.com");
+        let jwt = jwt_with_email("ann.lee@example.com");
         let token = make_token(&key, &jwt);
         let got = decrypt_token(&token, &key).unwrap();
         assert_eq!(got, jwt);
-        assert_eq!(email_from_jwt(&got).as_deref(), Some("alice@example.com"));
+        assert_eq!(email_from_jwt(&got).as_deref(), Some("ann.lee@example.com"));
     }
 
     #[test]
@@ -249,8 +261,26 @@ mod tests {
     }
 
     #[test]
+    fn jwt_exp_claim() {
+        let header = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"{\"alg\":\"HS256\"}");
+        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"{\"sub\":\"u\",\"exp\":1789029052}");
+        assert_eq!(jwt_exp(&format!("{header}.{payload}.sig")), Some(1789029052));
+        let no_exp = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"{\"sub\":\"u\"}");
+        assert_eq!(jwt_exp(&format!("{header}.{no_exp}.sig")), None);
+        assert_eq!(jwt_exp("garbage"), None);
+    }
+
+    #[test]
+    fn decrypt_token_yields_bearer_jwt_verbatim() {
+        // access_jwt 走的就是 decrypt_token：解出的 JWT 原文即上游 Bearer 凭证
+        let key = [5u8; 32];
+        let jwt = jwt_with_email("bob@example.com");
+        assert_eq!(decrypt_token(&make_token(&key, &jwt), &key).as_deref(), Some(jwt.as_str()));
+    }
+
+    #[test]
     fn local_part_of_email() {
-        assert_eq!(local_part("alice@example.com"), "alice");
+        assert_eq!(local_part("ann.lee@example.com"), "ann.lee");
         assert_eq!(local_part("noatsign"), "noatsign");
     }
 }

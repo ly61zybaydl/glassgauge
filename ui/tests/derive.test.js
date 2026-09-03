@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { deriveWindow, deriveAll, deriveStatus, resetText, tightest, limitsMatchAccount, fmtUsd, fmtAmount } from "../derive.js";
+import { deriveWindow, deriveAll, deriveStatus, resetText, tightest, limitsMatchAccount, fmtUsd, fmtAmount, offlineMessage } from "../derive.js";
 
 const fixture = JSON.parse(
   new TextDecoder().decode(readFileSync(new URL("./fixtures/limits.json", import.meta.url))),
@@ -136,4 +136,12 @@ test("坏数据不炸：budget<=0 丢弃；无法解析时长的窗口名保留�
   assert.equal(all.windows.length, 1); // budget<=0 的 5h 丢弃；"1y" 保留
   assert.equal(all.windows[0].name, "1y");
   assert.equal(all.windows[0].pacePct, null); // "y" 非 m/h/d/w → 解析不出时长 → 无匀速线
+});
+
+test("offlineMessage：令牌过期与 relay 未就绪给不同提示", () => {
+  assert.match(offlineMessage("token-expired", true), /令牌已过期/);
+  assert.match(offlineMessage("token-expired", false), /令牌已过期/);
+  assert.match(offlineMessage("relay-not-found", true), /等待 Mirasim 启动/);
+  assert.match(offlineMessage("", false), /等待 Mirasim 启动/);
+  assert.match(offlineMessage(undefined, true), /自动重连/);
 });

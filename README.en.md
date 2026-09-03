@@ -21,8 +21,10 @@ CLI (see `cli/`).
 
 ## What it does
 
-- Auto-discovers the local mirasim relay (the port is assigned dynamically — it scans
-  and claims by response shape) and polls `GET /v1/limits`.
+- Fetches `GET /v1/limits` straight from the upstream `relay.mirasim.ai` with the current
+  account's own token (v0.14.0, see below); when no token is available it falls back to
+  auto-discovering the local mirasim relay (the port is assigned dynamically — it scans and
+  claims by response shape).
 - Always-expanded panel that **shows every usage window the relay returns** (v0.11.0 —
   5h/7d/30d plus new ones like `7d_fable`; each window's length is parsed from its name to
   draw the even-pace tick), each with used %, the **raw credits and the estimated API cost
@@ -88,6 +90,18 @@ layout (`~/.mirasim/_account_switcher/{profiles,backups}`) and can be used inter
   it stops showing those numbers (otherwise you'd see the previous account's usage), shows
   "syncing the new account's usage…" instead, and fast-polls (every 3s, up to ~150s) until the
   relay catches up. If it stays stale for a long time, restarting Mirasim forces a refresh.
+- **Limits are now fetched upstream instead of from the local relay's anonymous endpoint**
+  (v0.14.0): since mirasim 0.0.284 the local relay hands every agent session its own secret
+  URL path plus a session token, nothing is persisted on disk, and an anonymous
+  `GET /v1/limits` always gets 401 — which left older widget builds stuck on "waiting for
+  Mirasim". The widget now uses the same local decryption chain to recover the current
+  account's access JWT and requests `https://relay.mirasim.ai/v1/limits` with it as a
+  Bearer token (exactly how mirasim itself fetches usage; same response shape; `subject` is
+  always the current account, so there is no catch-up period after switching). Local relay
+  discovery is kept as a fallback for older mirasim versions. The token is used in-process
+  only — never sent to the WebView, never written to disk — and mirasim keeps it refreshed
+  (access tokens expire after about an hour). If mirasim has been closed long enough for the
+  token to expire, the panel says "login token expired · open Mirasim to refresh".
 
 ## Liquid-glass engine
 

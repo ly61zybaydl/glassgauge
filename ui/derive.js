@@ -121,3 +121,15 @@ export function limitsMatchAccount(limits, userId) {
 function round1(x) {
   return Math.round(x * 10) / 10;
 }
+
+/**
+ * 取数失败时的空态文案。errCode 来自后端 fetch_limits 的 Err：
+ * "token-expired" = 登录令牌已过期/被上游拒绝且本机也没有 relay——需要打开 Mirasim 让它刷新令牌；
+ * 其它（"relay-not-found"/网络错误）= 上游不可达且本机 relay 未就绪，自动重连。
+ */
+export function offlineMessage(errCode, expanded) {
+  if (errCode === "token-expired") {
+    return expanded ? "登录令牌已过期 · 打开 Mirasim 刷新后自动恢复" : "令牌已过期 · 打开 Mirasim";
+  }
+  return expanded ? "等待 Mirasim 启动 · 自动重连中…" : "等待 Mirasim 启动…";
+}

@@ -62,7 +62,7 @@ pub struct CurrentMeta {
     pub profile: Option<String>,
 }
 
-fn mirasim_home() -> PathBuf {
+pub(crate) fn mirasim_home() -> PathBuf {
     if let Ok(h) = std::env::var("MIRASIM_HOME") {
         let h = h.trim();
         if !h.is_empty() {
