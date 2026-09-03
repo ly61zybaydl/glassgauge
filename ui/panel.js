@@ -1,6 +1,6 @@
 // 渲染与数据环。派生计算全部来自 derive.js；本文件只做取数节奏和 DOM。
 import { accountItems, currentLabel, esc, planBadge, planExpiry } from "./accounts-view.js";
-import { deriveAll, limitsMatchAccount, fmtUsd, fmtAmount } from "./derive.js";
+import { deriveAll, limitsMatchAccount, fmtUsd, fmtAmount, offlineMessage } from "./derive.js";
 import { initGlass, recropTo, reloadWallpaper, teardownGlass } from "./glass.js";
 import { applyWallpaperTheme } from "./theme.js";
 
@@ -13,6 +13,7 @@ let lastGood = null; // 最后一次成功的 {json, at}
 let timer = null;
 let backoffMs = 0; // 0 = 正常节奏；失败后 5s→30s
 let lastConnected = true;
+let lastErr = ""; // 最后一次取数失败的错误码："relay-not-found" | "token-expired" | 其它
 let expanded = false; // 悬停展开态（spec 形态 C）
 let fastUntil = 0; // 切号后允许快轮询到此时刻（等 relay 的 /v1/limits 追上新账号）
 let lastTickAt = 0; // 上次进入 tick 的时刻（看门狗判活）
@@ -71,9 +72,11 @@ async function tick() {
     try {
       const res = await invoke("fetch_limits");
       lastGood = { json: JSON.parse(res.json), at: Date.now() };
+      lastErr = "";
       ok = true;
-    } catch {
-      /* relay-not-found 或网络失败 → 降级渲染 */
+    } catch (e) {
+      /* relay-not-found / token-expired / 网络失败 → 降级渲染，记下错误码决定提示文案 */
+      lastErr = typeof e === "string" ? e : String(e?.message ?? e ?? "");
     }
     try {
       accounts = await invoke("accounts_list"); // 本地文件读，与 relay 独立
@@ -136,7 +139,7 @@ function render(connected) {
   if (!limits) {
     app.innerHTML = shellHtml({
       dot: "grey",
-      who: !connected ? "等待 Mirasim 启动…" : syncing ? "同步新账号用量…" : "加载中…",
+      who: !connected ? offlineMessage(lastErr, false) : syncing ? "同步新账号用量…" : "加载中…",
       pct: "–",
       fill: 0,
       tickAt: 0,
@@ -167,11 +170,7 @@ function render(connected) {
 function expandedHtml(all, connected, syncing) {
   const dot = connected ? (all?.status.dot ?? "grey") : "grey";
   const dotCls = dot === "accent" ? "dot" : `dot ${dot}`;
-  const emptyMsg = !connected
-    ? "等待 Mirasim 启动 · 自动重连中…"
-    : syncing
-      ? "正在同步新账号用量…"
-      : "加载中…";
+  const emptyMsg = !connected ? offlineMessage(lastErr, true) : syncing ? "正在同步新账号用量…" : "加载中…";
   // 费用折算：普通窗口 unitsPerUsd（默认 200 units=$1），Fable 窗口贵 fableMultiplier
   // （默认 2.4）倍 → 480 units=$1。名字含 fable 的窗口按 Fable 单价。
   const base = config?.unitsPerUsd ?? 200;

@@ -62,7 +62,7 @@ pub struct CurrentMeta {
     pub profile: Option<String>,
 }
 
-fn mirasim_home() -> PathBuf {
+pub(crate) fn mirasim_home() -> PathBuf {
     if let Ok(h) = std::env::var("MIRASIM_HOME") {
         let h = h.trim();
         if !h.is_empty() {
@@ -280,7 +280,7 @@ impl Store {
             self.write_profile(&name, &auth)?;
             return Ok(Some(name));
         }
-        // 默认名优先取邮箱本地部分（yi.liu@… → yi.liu），回退账号名，再回退 userId
+        // 默认名优先取邮箱本地部分（ann.lee@… → ann.lee），回退账号名，再回退 userId
         let email = self.email_of(&auth);
         let base = email
             .as_deref()
@@ -732,7 +732,7 @@ mod tests {
 
     #[test]
     fn sanitize_names() {
-        assert_eq!(sanitize_name("Yi Liu"), "Yi-Liu");
+        assert_eq!(sanitize_name("Ann Lee"), "Ann-Lee");
         assert_eq!(sanitize_name("  主号!!"), "主号");
         assert_eq!(sanitize_name("a/b\\c"), "a-b-c");
         assert_eq!(sanitize_name("---"), "");
