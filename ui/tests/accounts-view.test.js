@@ -1,14 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { accountItems, currentLabel, savedAgo, esc, planBadge, planExpiry } from "../accounts-view.js";
+import { accountItems, currentLabel, savedAgo, esc, planBadge, planExpiry, toolItems, clockOf } from "../accounts-view.js";
 
 const NOW = 1_700_000_000_000;
 
 test("currentLabel：邮箱优先 / 显示名 / userId 兜底 / 未登录", () => {
   assert.equal(currentLabel(null), "未登录");
   assert.equal(currentLabel({ current: null, profiles: [] }), "未登录");
-  assert.equal(currentLabel({ current: { email: "alice@example.com", name: "Ada Lovelace", userId: "usr_1" } }), "alice@example.com");
-  assert.equal(currentLabel({ current: { email: null, name: "Ada Lovelace", userId: "usr_1" } }), "Ada Lovelace");
+  assert.equal(currentLabel({ current: { email: "ann@example.com", name: "Ann Lee", userId: "usr_1" } }), "ann@example.com");
+  assert.equal(currentLabel({ current: { email: null, name: "Ann Lee", userId: "usr_1" } }), "Ann Lee");
   assert.equal(currentLabel({ current: { name: "", userId: "usr_1" } }), "usr_1");
 });
 
@@ -51,4 +51,18 @@ test("planExpiry：账号 planExp(Unix秒) → YYYY-MM-DD，回退 config", () =
 test("esc 转义全部危险字符", () => {
   assert.equal(esc(`<b a="1" b='2'>&`), "&lt;b a=&quot;1&quot; b=&#39;2&#39;&gt;&amp;");
   assert.equal(esc(null), "");
+});
+
+test("toolItems：已登录三件套、未登录只剩导入", () => {
+  assert.deepEqual(toolItems({ current: { userId: "usr_1" } }).map((t) => t.act), ["export", "import", "refresh"]);
+  assert.deepEqual(toolItems({ current: null }).map((t) => t.act), ["import"]);
+  assert.deepEqual(toolItems(null).map((t) => t.act), ["import"]);
+  for (const t of toolItems({ current: { userId: "usr_1" } })) assert.ok(t.label && t.title);
+});
+
+test("clockOf：Unix 秒 → 本地 HH:MM，空值兜底", () => {
+  const d = new Date(2026, 8, 7, 9, 5, 0);
+  assert.equal(clockOf(d.getTime() / 1000), "09:05");
+  assert.equal(clockOf(0), "–");
+  assert.equal(clockOf(null), "–");
 });

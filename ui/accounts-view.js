@@ -51,3 +51,20 @@ export function esc(s) {
     { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
   ));
 }
+
+/** 账号工具栏：导出 / 刷新令牌作用于当前登录，需要已登录；导入随时可用。 */
+export function toolItems(view) {
+  const cur = !!view?.current;
+  return [
+    ...(cur ? [{ act: "export", label: "⤓ 导出", title: "把当前登录导出为明文 JSON（两枚 JWT）" }] : []),
+    { act: "import", label: "⤒ 导入", title: "从 JSON 文件导入账号为快照（会联网验活一次）" },
+    ...(cur ? [{ act: "refresh", label: "↻ 刷新令牌", title: "用 refresh 令牌换一对新令牌并写回 setting.json" }] : []),
+  ];
+}
+
+/** Unix 秒 → 本地 HH:MM（刷新结果里显示新 access 有效到几点）。 */
+export function clockOf(sec) {
+  if (!sec) return "–";
+  const d = new Date(sec * 1000);
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}

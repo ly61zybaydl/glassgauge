@@ -263,3 +263,24 @@ html, body {
 .solid .bar { background: rgba(0, 0, 0, 0.1); }
 .solid .tick { background: rgba(0, 0, 0, 0.5); }
 .solid .set input[type="range"] { background: rgba(0, 0, 0, 0.1); }
+
+/* 账号工具栏（导出 / 导入 / 刷新令牌）与快照行内的小按钮（v0.15.0） */
+.acct-tools {
+  display: flex; gap: 6px; flex-wrap: wrap;
+  padding: 6px 11px 7px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+.acct-tool {
+  font-size: 10px; padding: 2px 8px; border-radius: 9px;
+  background: rgba(255, 255, 255, 0.1); cursor: pointer; white-space: nowrap;
+}
+.acct-tool:hover { background: rgba(255, 255, 255, 0.2); }
+.acct-mini {
+  flex: none;
+  font-size: 11px; opacity: 0.5; line-height: 1;
+  padding: 2px 4px; border-radius: 5px; cursor: pointer;
+}
+.acct-mini:hover { opacity: 1; background: rgba(255, 255, 255, 0.18); }
+.solid .acct-tools { border-top-color: rgba(0, 0, 0, 0.1); }
+.solid .acct-tool { background: rgba(0, 0, 0, 0.06); }
+.solid .acct-tool:hover, .solid .acct-mini:hover { background: rgba(0, 0, 0, 0.1); }

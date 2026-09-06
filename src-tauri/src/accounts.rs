@@ -89,20 +89,20 @@ fn read_json(path: &Path) -> Result<Value, String> {
 }
 
 /// 临时文件 + 改名原子写（Windows 上 rename 覆盖同卷已有文件）。
-fn write_json_atomic(path: &Path, v: &Value) -> Result<(), String> {
+pub(crate) fn write_json_atomic(path: &Path, v: &Value) -> Result<(), String> {
     let tmp = path.with_extension(format!("tmp-{}", std::process::id()));
     fs::write(&tmp, serde_json::to_string_pretty(v).unwrap())
         .map_err(|e| format!("写入 {} 失败:{e}", tmp.display()))?;
     fs::rename(&tmp, path).map_err(|e| format!("替换 {} 失败:{e}", path.display()))
 }
 
-fn has_login(auth: &Value) -> bool {
+pub(crate) fn has_login(auth: &Value) -> bool {
     let s = |k: &str| auth.get(k).and_then(Value::as_str).unwrap_or("");
     !s("token").is_empty() && !s("userId").is_empty()
 }
 
 /// 与 CLI 相同的名字清洗：字母/数字（含 CJK）/_-. 之外换 '-'，掐头去尾，限 40 字符。
-fn sanitize_name(name: &str) -> String {
+pub(crate) fn sanitize_name(name: &str) -> String {
     let mut out = String::new();
     for c in name.trim().chars() {
         if c.is_alphanumeric() || c == '_' || c == '-' || c == '.' {
@@ -115,14 +115,14 @@ fn sanitize_name(name: &str) -> String {
     out.chars().take(40).collect()
 }
 
-fn short_id(user_id: &str) -> String {
+pub(crate) fn short_id(user_id: &str) -> String {
     user_id.trim_start_matches("usr_").chars().take(8).collect()
 }
 
 /// 自动命名去重：base 若被【别的账号】占用，先用邮箱域名首段消歧
 /// （sam@outlook.com 与 sam@gmail.com → sam / sam-outlook），
 /// 再不行附短 userId 兜底，保证唯一。本账号自己占用的名字视为可用（就是它）。
-fn unique_auto_name(
+pub(crate) fn unique_auto_name(
     base: &str,
     uid: &str,
     email: Option<&str>,
@@ -158,7 +158,7 @@ fn unique_auto_name(
 }
 
 /// setting-YYYYMMDD-HHMMSS（UTC）。手算 civil date，省掉时间库依赖。
-fn backup_stamp() -> String {
+pub(crate) fn backup_stamp() -> String {
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
@@ -186,13 +186,17 @@ fn backup_stamp() -> String {
     )
 }
 
-struct Store {
+pub(crate) struct Store {
     home: PathBuf,
 }
 
 impl Store {
-    fn new(home: PathBuf) -> Self {
+    pub(crate) fn new(home: PathBuf) -> Self {
         Self { home }
+    }
+
+    pub(crate) fn home(&self) -> &Path {
+        &self.home
     }
 
     /// 从一个 auth 块的 token 解出账号可展示字段（邮箱/套餐/到期）。
@@ -202,11 +206,11 @@ impl Store {
     }
 
     /// 从一个 auth 块的 token 解出邮箱（本机 secret.key 可解时）。
-    fn email_of(&self, auth: &Value) -> Option<String> {
+    pub(crate) fn email_of(&self, auth: &Value) -> Option<String> {
         self.account_of(auth)?.email
     }
 
-    fn setting_path(&self) -> PathBuf {
+    pub(crate) fn setting_path(&self) -> PathBuf {
         self.home.join("setting.json")
     }
     fn profiles_dir(&self) -> PathBuf {
@@ -216,7 +220,7 @@ impl Store {
         self.home.join("_account_switcher").join("backups")
     }
 
-    fn load_setting(&self) -> Result<Value, String> {
+    pub(crate) fn load_setting(&self) -> Result<Value, String> {
         let p = self.setting_path();
         if !p.exists() {
             return Err(format!("找不到 {}（mirasim 数据目录不对？）", p.display()));
@@ -225,7 +229,7 @@ impl Store {
     }
 
     /// 所有可用快照（损坏的静默跳过），zh 排序近似：按名字码点排。
-    fn profiles(&self) -> Vec<(String, Value, PathBuf)> {
+    pub(crate) fn profiles(&self) -> Vec<(String, Value, PathBuf)> {
         let mut out = Vec::new();
         let Ok(entries) = fs::read_dir(self.profiles_dir()) else {
             return out;
@@ -246,11 +250,11 @@ impl Store {
         out
     }
 
-    fn profile_path(&self, name: &str) -> PathBuf {
+    pub(crate) fn profile_path(&self, name: &str) -> PathBuf {
         self.profiles_dir().join(format!("{name}.json"))
     }
 
-    fn write_profile(&self, name: &str, auth: &Value) -> Result<(), String> {
+    pub(crate) fn write_profile(&self, name: &str, auth: &Value) -> Result<(), String> {
         fs::create_dir_all(self.profiles_dir()).map_err(|e| format!("建目录失败:{e}"))?;
         // email 落进元数据，供 CLI 复用；显示时若缺失会从 token 现解
         let rec = json!({
@@ -320,7 +324,7 @@ impl Store {
         Ok(())
     }
 
-    fn view(&self) -> Result<AccountsView, String> {
+    pub(crate) fn view(&self) -> Result<AccountsView, String> {
         let setting = self.load_setting()?;
         let auth = setting.get("auth").cloned().unwrap_or(Value::Null);
         let cur_uid = auth.get("userId").and_then(Value::as_str).unwrap_or("").to_string();

@@ -5,6 +5,7 @@ mod discovery;
 mod engine;
 mod relay;
 mod token;
+mod transfer;
 mod wallpaper;
 mod window;
 
@@ -23,6 +24,9 @@ fn main() {
             accounts::accounts_save,
             accounts::accounts_switch,
             accounts::accounts_remove,
+            transfer::accounts_export,
+            transfer::accounts_import,
+            transfer::accounts_refresh,
         ])
         .setup(|app| {
             window::setup(app)?;

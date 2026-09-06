@@ -50,6 +50,28 @@ pub fn jwt_exp(jwt: &str) -> Option<i64> {
     jwt_claims(jwt)?.get("exp")?.as_i64()
 }
 
+/// 用本机主密钥把一段明文（JWT）封成 mrs1 密文——导入/刷新写回 setting.json 或快照时用。
+/// 随机 IV，布局与服务端一致 `[IV 12][TAG 16][CT]`。secret.key 不可用时 None。
+pub fn seal(home: &Path, plain: &str) -> Option<String> {
+    encrypt_token(plain, &master_key(home)?)
+}
+
+/// mrs1 加密（decrypt_token 的逆）。
+pub fn encrypt_token(plain: &str, key: &[u8; 32]) -> Option<String> {
+    use aes_gcm::aead::{Aead, AeadCore, KeyInit, OsRng};
+    use aes_gcm::Aes256Gcm;
+
+    let cipher = Aes256Gcm::new_from_slice(key).ok()?;
+    let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+    let out = cipher.encrypt(&nonce, plain.as_bytes()).ok()?; // CT||TAG
+    let (ct, tag) = out.split_at(out.len().checked_sub(16)?);
+    let mut buf = Vec::with_capacity(12 + out.len());
+    buf.extend_from_slice(&nonce);
+    buf.extend_from_slice(tag);
+    buf.extend_from_slice(ct);
+    Some(format!("{PREFIX}{}", base64::engine::general_purpose::STANDARD.encode(buf)))
+}
+
 /// 主密钥单条缓存：DPAPI 解一次即可（secret.key 不在会话内轮换）。按 home 路径
 /// 记忆，换目录（测试/沙箱）自动重派生。所有令牌都用同一把机器密钥加密。
 fn master_key(home: &Path) -> Option<[u8; 32]> {
@@ -94,8 +116,8 @@ fn decrypt_token(token: &str, key: &[u8; 32]) -> Option<String> {
     String::from_utf8(plain).ok()
 }
 
-/// 解 JWT 的 payload 段为 claims 对象。
-fn jwt_claims(jwt: &str) -> Option<serde_json::Value> {
+/// 解 JWT 的 payload 段为 claims 对象（不验签——签名由服务端验，本地只读展示字段）。
+pub fn jwt_claims(jwt: &str) -> Option<serde_json::Value> {
     let payload = jwt.split('.').nth(1)?;
     let bytes = b64_url(payload)?;
     serde_json::from_slice(&bytes).ok()
@@ -187,6 +209,50 @@ fn dpapi_unprotect(_blob: &[u8]) -> Option<Vec<u8>> {
     None
 }
 
+/* ---------- 测试工具箱：沙箱里现造 DPAPI 保护的 secret.key + 真格式令牌（不碰真实凭证） ---------- */
+
+#[cfg(all(test, windows))]
+pub(crate) mod testkit {
+    use super::*;
+
+    fn dpapi_protect(data: &[u8]) -> Vec<u8> {
+        use windows::Win32::Foundation::{HLOCAL, LocalFree};
+        use windows::Win32::Security::Cryptography::{CryptProtectData, CRYPT_INTEGER_BLOB};
+        let mut input = CRYPT_INTEGER_BLOB {
+            cbData: data.len() as u32,
+            pbData: data.as_ptr() as *mut u8,
+        };
+        let mut out = CRYPT_INTEGER_BLOB::default();
+        unsafe {
+            CryptProtectData(&mut input, windows::core::PCWSTR::null(), None, None, None, 0, &mut out)
+                .expect("CryptProtectData");
+            let v = std::slice::from_raw_parts(out.pbData, out.cbData as usize).to_vec();
+            let _ = LocalFree(Some(HLOCAL(out.pbData as *mut _)));
+            v
+        }
+    }
+
+    /// 在 home 下写一份本机可解的 secret.key（与 load_master_key 互逆），返回主密钥。
+    pub fn install_sandbox_key(home: &Path, key: [u8; 32]) -> [u8; 32] {
+        let key_hex: String = key.iter().map(|b| format!("{b:02x}")).collect();
+        let utf16: Vec<u8> = key_hex.encode_utf16().flat_map(u16::to_le_bytes).collect();
+        let blob_hex: String = dpapi_protect(&utf16).iter().map(|b| format!("{b:02x}")).collect();
+        std::fs::create_dir_all(home).unwrap();
+        std::fs::write(home.join("secret.key"), blob_hex).unwrap();
+        key
+    }
+
+    /// 造一枚未签名的 JWT（服务端字段齐全：sub/email/plan/token_type/exp/sid）。
+    pub fn jwt(sub: &str, email: &str, token_type: &str, exp: i64) -> String {
+        let b64 = |b: &[u8]| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b);
+        let payload = serde_json::json!({
+            "sub": sub, "email": email, "plan": "plus", "plan_exp": exp + 86400 * 30,
+            "token_type": token_type, "exp": exp, "iat": exp - 3600, "sid": "ses_test", "jti": format!("{token_type}-{exp}")
+        });
+        format!("{}.{}.sig", b64(b"{\"alg\":\"HS256\",\"typ\":\"JWT\"}"), b64(payload.to_string().as_bytes()))
+    }
+}
+
 /* ---------- 单测（不碰 DPAPI：直接给已知密钥造令牌验证解密+JWT 链路） ---------- */
 
 #[cfg(test)]
@@ -276,6 +342,17 @@ mod tests {
         let key = [5u8; 32];
         let jwt = jwt_with_email("bob@example.com");
         assert_eq!(decrypt_token(&make_token(&key, &jwt), &key).as_deref(), Some(jwt.as_str()));
+    }
+
+    #[test]
+    fn encrypt_then_decrypt_roundtrip_with_random_iv() {
+        let key = [3u8; 32];
+        let a = encrypt_token("hello.jwt.body", &key).unwrap();
+        let b = encrypt_token("hello.jwt.body", &key).unwrap();
+        assert!(a.starts_with("mrs1:") && a != b, "随机 IV，同明文两次密文不同");
+        assert_eq!(decrypt_token(&a, &key).as_deref(), Some("hello.jwt.body"));
+        assert_eq!(decrypt_token(&b, &key).as_deref(), Some("hello.jwt.body"));
+        assert!(decrypt_token(&a, &[4u8; 32]).is_none());
     }
 
     #[test]

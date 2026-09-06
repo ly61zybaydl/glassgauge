@@ -1,6 +1,6 @@
 [package]
 name = "glassgauge"
-version = "0.14.0"
+version = "0.15.0"
 description = "Liquid-glass usage widget for the mirasim relay"
 edition = "2021"
 
@@ -17,6 +17,8 @@ notify = "6"
 winreg = "0.52"
 base64 = "0.22"
 aes-gcm = "0.10"
+# 凭证导出/导入的原生文件对话框（令牌只在 Rust 侧流转，所以对话框也放 Rust）
+rfd = "0.15"
 # 原生折射引擎（spec 2026-08-18-glassgauge-native-refraction-engine）
 windows = { version = "0.61", features = [
   "Win32_Foundation",

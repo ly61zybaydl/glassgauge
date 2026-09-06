@@ -1,5 +1,5 @@
 // 渲染与数据环。派生计算全部来自 derive.js；本文件只做取数节奏和 DOM。
-import { accountItems, currentLabel, esc, planBadge, planExpiry } from "./accounts-view.js";
+import { accountItems, clockOf, currentLabel, esc, planBadge, planExpiry, toolItems } from "./accounts-view.js";
 import { deriveAll, limitsMatchAccount, fmtUsd, fmtAmount, offlineMessage } from "./derive.js";
 import { initGlass, recropTo, reloadWallpaper, teardownGlass } from "./glass.js";
 import { applyWallpaperTheme } from "./theme.js";
@@ -26,7 +26,8 @@ let glassCommitTimer = null;
 // 账号切换（读写 ~/.mirasim，与 relay 无关——断连时也可用，正是需要切号的场景）
 let accounts = null; // 最后一次 accounts_list 的视图（只含元数据，无令牌）
 let acctOpen = false; // 快照列表展开
-let acctBusy = false; // 切换/保存进行中，屏蔽点击
+let acctBusy = false; // 切换/保存/导出/导入/刷新进行中，屏蔽点击
+let acctBusyLabel = "处理中…"; // 忙碌时账号行显示的文案
 let acctNote = null; // 瞬时提示 {text, kind:"ok"|"err"}
 let acctNoteTimer = null;
 let acctConfirm = null; // 待二次确认删除的快照名
@@ -271,7 +272,7 @@ function onGlassInput(input) {
 /* ---------- 账号切换（数据来自 accounts_list，只有元数据没有令牌） ---------- */
 function acctHtml() {
   if (!accounts) return ""; // 还没读到 setting.json：不画账号行
-  const label = acctBusy ? "切换中…" : currentLabel(accounts);
+  const label = acctBusy ? acctBusyLabel : currentLabel(accounts);
   const row = `
       <div class="acct-row${acctBusy ? " busy" : ""}" data-acct-act="toggle">
         <span class="acct-k">账号</span>
@@ -287,12 +288,14 @@ function acctHtml() {
           : `<span class="acct-del${acctConfirm === it.name ? " arm" : ""}" data-acct-del="${esc(it.name)}">${
               acctConfirm === it.name ? "确认删除" : "✕"
             }</span>`;
+        // 行内小按钮：导出 / 刷新此快照（点击不触发切换，见 click 分发）
+        const mini = `<span class="acct-mini" data-acct-exp="${esc(it.name)}" title="导出此快照为明文 JSON">⤓</span><span class="acct-mini" data-acct-ref="${esc(it.name)}" title="刷新此快照的令牌">↻</span>`;
         return `
         <div class="acct-item${it.current ? " cur" : ""}" data-acct-act="switch" data-name="${esc(it.name)}">
           <span class="acct-dot${it.current ? " on" : ""}"></span>
           <span class="acct-item-name">${esc(it.name)}</span>
           <span class="acct-item-sub">${esc(it.sub)}</span>
-          ${del}
+          ${mini}${del}
         </div>`;
       })
       .join("");
@@ -302,7 +305,11 @@ function acctHtml() {
     const save = accounts.current
       ? `<div class="acct-item save" data-acct-act="save">＋ 保存当前登录为快照</div>`
       : `<div class="acct-hint">当前未登录 · 点任意快照可直接恢复该账号</div>`;
-    list = `<div class="acct-list">${hint}${items}${save}</div>`;
+    // 工具栏：导出 / 导入 / 刷新令牌（导出、刷新作用于当前登录）
+    const tools = `<div class="acct-tools">${toolItems(accounts)
+      .map((t) => `<span class="acct-tool" data-acct-act="${t.act}" title="${esc(t.title)}">${esc(t.label)}</span>`)
+      .join("")}</div>`;
+    list = `<div class="acct-list">${hint}${items}${save}${tools}</div>`;
   }
   const note = acctNote
     ? `<div class="acct-note ${acctNote.kind}">${esc(acctNote.text)}</div>`
@@ -323,6 +330,7 @@ function setNote(text, kind) {
 
 async function doSwitch(name) {
   acctBusy = true;
+  acctBusyLabel = "切换中…";
   setNote(null);
   render(lastConnected);
   try {
@@ -343,6 +351,7 @@ async function doSwitch(name) {
 
 async function doSave() {
   acctBusy = true;
+  acctBusyLabel = "保存中…";
   render(lastConnected);
   try {
     accounts = await invoke("accounts_save", { name: null });
@@ -377,6 +386,57 @@ async function doRemove(name) {
   render(lastConnected);
 }
 
+/* ---------- 凭证导出 / 导入 / 刷新（v0.15.0）：三条命令全在 Rust 侧完成，
+   文件对话框也在 Rust 弹，前端只拿到路径 / 邮箱 / 快照名等元数据。 ---------- */
+async function doExport(name) {
+  acctBusy = true;
+  acctBusyLabel = "导出中…";
+  setNote(null);
+  render(lastConnected);
+  try {
+    const r = await invoke("accounts_export", { name });
+    setNote(`已导出${r.target} → ${r.path}`, "ok");
+  } catch (e) {
+    if (String(e) !== "cancelled") setNote(String(e), "err");
+  }
+  acctBusy = false;
+  render(lastConnected);
+}
+
+async function doImport() {
+  acctBusy = true;
+  acctBusyLabel = "导入中…";
+  setNote(null);
+  render(lastConnected);
+  try {
+    const r = await invoke("accounts_import");
+    accounts = r.view;
+    const verified = r.refreshed ? "（已联网验活）" : "";
+    setNote(`已导入 ${r.email ?? "账号"} → 快照「${r.name}」${verified}${r.note ? " · " + r.note : ""}`, r.note ? "err" : "ok");
+  } catch (e) {
+    if (String(e) !== "cancelled") setNote(String(e), "err");
+  }
+  acctBusy = false;
+  render(lastConnected);
+}
+
+async function doRefresh(name) {
+  acctBusy = true;
+  acctBusyLabel = "刷新令牌中…";
+  setNote(null);
+  render(lastConnected);
+  try {
+    const r = await invoke("accounts_refresh", { name });
+    accounts = r.view;
+    setNote(`已刷新${r.target}的令牌 · 新 access 有效至 ${clockOf(r.accessExp)}`, "ok");
+    if (!name) tick(); // 当前登录换了新令牌，立刻用它重取一次额度
+  } catch (e) {
+    setNote(String(e), "err");
+  }
+  acctBusy = false;
+  render(lastConnected);
+}
+
 document.getElementById("app").addEventListener("input", (e) => {
   const input = e.target.closest("[data-set-glass]");
   if (input) onGlassInput(input);
@@ -395,6 +455,17 @@ document.getElementById("app").addEventListener("click", (e) => {
     doRemove(del.getAttribute("data-acct-del"));
     return;
   }
+  // 快照行内的小按钮先于整行的 switch 判定，点它们不切换账号
+  const exp = e.target.closest("[data-acct-exp]");
+  if (exp) {
+    doExport(exp.getAttribute("data-acct-exp"));
+    return;
+  }
+  const ref = e.target.closest("[data-acct-ref]");
+  if (ref) {
+    doRefresh(ref.getAttribute("data-acct-ref"));
+    return;
+  }
   const el = e.target.closest("[data-acct-act]");
   if (!el) return;
   const act = el.getAttribute("data-acct-act");
@@ -404,6 +475,12 @@ document.getElementById("app").addEventListener("click", (e) => {
     render(lastConnected);
   } else if (act === "save") {
     doSave();
+  } else if (act === "export") {
+    doExport(null);
+  } else if (act === "import") {
+    doImport();
+  } else if (act === "refresh") {
+    doRefresh(null);
   } else if (act === "switch") {
     const name = el.getAttribute("data-name");
     const cur = accounts?.profiles.find((p) => p.name === name)?.current;

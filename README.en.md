@@ -103,6 +103,36 @@ layout (`~/.mirasim/_account_switcher/{profiles,backups}`) and can be used inter
   (access tokens expire after about an hour). If mirasim has been closed long enough for the
   token to expire, the panel says "login token expired · open Mirasim to refresh".
 
+### Credential export / import / refresh (v0.15.0)
+
+The account list gains a tool row — **⤓ export**, **⤒ import**, **↻ refresh token** — and every
+snapshot row has its own ⤓ / ↻ mini buttons acting on that snapshot.
+
+- **Export** writes the current login (or a snapshot) as **plaintext JSON**: the two JWTs
+  (access + refresh) plus email, plan and expiry metadata. **Anyone holding the file can sign in
+  as that account — keep it safe.** The default name is `mirasim-<email local part>-<date>.json`;
+  you pick the location in a native save dialog.
+- **Import** takes a JSON file in any of three key styles: this tool's export format
+  (`accessToken/refreshToken`), the raw `/auth/verify` response (`access_token/refresh_token`), or
+  a setting.json auth block (`token/refreshToken`, plaintext or this machine's mrs1 ciphertext).
+  It first refreshes once against the login server to validate the credential and pick up a fresh
+  pair, then seals both with this machine's `secret.key` and stores a snapshot. The same account
+  overwrites its existing snapshot; the login is **not** switched automatically. If the network is
+  down it stores as-is and says so; if the server rejects the token it reports "invalid credential"
+  and stores nothing.
+- **Refresh token** does `POST https://auth.mirasim.ai/auth/refresh {refresh_token}` exactly like
+  mirasim itself (no signature, no device headers) and writes the new pair back — to setting.json
+  (current login: only token/refreshToken/exp change) or to the snapshot file. Refreshing the
+  current login immediately re-fetches usage with the new token.
+- **No side effects on other machines** (measured 2026-09-07): the server answers the same refresh
+  token with the same successor pair (idempotent), old refresh and old access tokens stay valid
+  after rotation, and there is no replay detection or session-level revocation. Refreshing,
+  exporting or importing on one machine never logs another one out, and an exported credential
+  doesn't die because the source keeps auto-refreshing hourly.
+- Tokens never leave the Rust process; the file dialogs (rfd) open on the Rust side too, so the
+  WebView only ever sees paths, emails and snapshot names. The CLI (`cli/`) doesn't offer these
+  three yet.
+
 ## Liquid-glass engine
 
 Three glass modes (the `mode` config key):
